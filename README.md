@@ -111,6 +111,7 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
 
 - `sparkyctrl exec  <host> -- <argv...>` — run a command, mangle-proof; stdout/stderr/exit code back.
 - `sparkyctrl shell <host> <script>` — explicit, logged shell path for pipes/globs/etc.
+  (`cmd` on Windows, `/bin/sh` on Unix; trailing backslashes are preserved — quote paths with spaces).
 - `sparkyctrl read|write|ls|push|pull <host> ...` — binary-safe file operations.
 - `sparkyctrl edit  <host> <remote> --old X --new Y [--all]` — surgical exact-string replacement (refuses on no-match or non-unique match; atomic write).
 - `sparkyctrl info  <host>` — worker info.

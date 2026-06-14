@@ -90,7 +90,7 @@ func RunShell(req protocol.ShellRequest) protocol.ExecResponse {
 	case "powershell":
 		cmd = exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", req.Script)
 	case "", "sh":
-		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", req.Script)
+		cmd = defaultShellCommand(ctx, req.Script)
 	default:
 		return protocol.ExecResponse{ExitCode: -1, Error: "unsupported shell: " + req.Shell}
 	}
