@@ -25,12 +25,13 @@ shared token generated at install time, which can be disabled if your network is
 
 ## Security reality
 
-> This is root-level RCE on a trusted LAN.
->
-> - Shared token by default; generated at install and required unless you pass `--no-auth` / `-NoAuth`.
-> - No users, no roles, no TLS.
-> - `exec` and `shell` run as root and ignore the fence; the fence only constrains file verbs.
-> - If the port is reachable from the internet, you have published a root shell.
+sparkyctrl gives agents root on your machines. The token keeps honest agents honest on a
+trusted LAN, and that's its entire job. If that sentence doesn't sit right, don't install it.
+
+- **If this port touches the internet, you've published a root shell.** No exceptions.
+- Token auth is **a lock on the door, not a bank vault.** Disable it (`--no-auth`) only on a network you physically control.
+- `exec` and `shell` are **unfenced by design.** The path fence limits file verbs only.
+- If you wouldn't hand the token to a stranger with a root prompt, this tool is not for you.
 
 ## Why this exists anyway
 
@@ -110,6 +111,30 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
 
 `<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
 verb for raw output.
+
+## MCP server (optional)
+
+If your agent speaks MCP natively, `sparkyctrl mcp` exposes every verb as an MCP tool — no
+CLI required. It's a local stdio server, not a network service. It reuses your existing
+`~/.sparkyctrl/hosts.toml` and `SPARKYCTRL_TOKEN`.
+
+**Wire into your agent's MCP config:**
+
+```json
+{
+  "mcpServers": {
+    "sparkyctrl": {
+      "command": "sparkyctrl",
+      "args": ["mcp"],
+      "env": { "SPARKYCTRL_TOKEN": "<your-token>" }
+    }
+  }
+}
+```
+
+**Tools exposed:** `exec`, `shell`, `read`, `write`, `edit`, `ls`, `info` — each takes a `host`
+parameter plus verb-specific arguments. Token auth passes through automatically from the
+environment. Full reference: [[agent-onboarding-tools-and-mcps#sparkyctrl MCP mode]].
 
 ## The audit log keeps receipts, not guarantees
 
