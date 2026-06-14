@@ -100,7 +100,7 @@ if ($existing) {
     if ($detach) {
         $upgradeScript = Join-Path $env:TEMP "sparkyctrl-upgrade-$(Get-Random).ps1"
         Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$Repo/master/deploy/install.ps1" -OutFile $upgradeScript -UseBasicParsing
-        Start-Process -FilePath powershell -ArgumentList "-NoProfile -File `"$upgradeScript`" -Start" -WindowStyle Hidden
+        Start-Process -FilePath powershell -ArgumentList @("-NoProfile", "-File", $upgradeScript, "-Start") -WindowStyle Hidden
         Info "running under sparkyctrl — install detached to background"
         Info "sparkyctrl will restart in a few seconds"
         exit 0
