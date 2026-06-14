@@ -85,6 +85,25 @@ The installer auto-downloads the right prebuilt binary for your CPU from the lat
 Re-run any time to switch modes. `./deploy/install.sh --help` lists every flag (`--addr`,
 `--audit`, `--token`, `--user`, `--no-enable`). Build from source with `./deploy/build.sh`.
 
+### Windows (yes, really — but you're on your own a bit more)
+
+There's a Windows build, but the friendly installer above is bash + systemd, so on Windows you
+wire it up by hand. The worker runs as whatever account you launch it under: an **Administrator**
+prompt hands you the full root-equivalent footgun; a limited user is the marginally saner choice.
+The `admin`/`hardened` modes are Linux-only.
+
+Download and run it (PowerShell):
+
+```powershell
+Invoke-WebRequest https://github.com/SimpleHonors/sparkyctrl/releases/latest/download/sparkyctrl-windows-amd64.exe -OutFile sparkyctrl.exe
+.\sparkyctrl.exe serve --addr 0.0.0.0:7766 --fence C:\share --audit C:\sparkyctrl\audit.log
+```
+
+To keep it running across reboots, use **Task Scheduler** (run at startup) or a service wrapper
+such as [NSSM](https://nssm.cc/) — the binary isn't a native Windows service, so `sc create` on
+its own won't behave. Windows is less battle-tested than Linux here: if something is going to be
+weird, it'll be weird on Windows first.
+
 ## Using it
 
 From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
