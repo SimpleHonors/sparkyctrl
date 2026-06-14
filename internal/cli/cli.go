@@ -219,7 +219,7 @@ func runShell(args []string, jsonOut bool) int {
 		}
 		script = strings.TrimSpace(string(data))
 		if script == "" {
-			return fail("shell requires <script> or piped stdin")
+			return fail("shell: stdin was empty")
 		}
 	}
 	c, err := mkClient(args[0])

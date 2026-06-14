@@ -22,3 +22,8 @@ func defaultShellCommand(ctx context.Context, script string) *exec.Cmd {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: buildWindowsShellLine(comspec, script)}
 	return cmd
 }
+
+// fileShellCommand runs a script file through cmd.exe.
+func fileShellCommand(ctx context.Context, path string) *exec.Cmd {
+	return exec.CommandContext(ctx, "cmd.exe", "/c", path)
+}
