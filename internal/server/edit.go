@@ -137,6 +137,12 @@ func diagnoseNoMatch(content, old string) string {
 		}
 		b.WriteString(fmt.Sprintf("\n  file starts with (%d bytes): %q", len(content), filePreview))
 	}
+	// If line endings differ, call it out explicitly so the caller doesn't
+	// have to visually compare \r\n against \n in the previews.
+	if hint := lineEndingHint(content, old); hint != "" {
+		b.WriteString("\n  " + hint)
+	}
+	b.WriteString("\n  matching is byte-for-byte: no regex, no whitespace normalisation, no shell")
 	return b.String()
 }
 
@@ -174,4 +180,28 @@ func diagnoseAmbiguous(content, old string, count int) string {
 
 	ctx := prefix + ">>>" + match + "<<<" + suffix
 	return fmt.Sprintf("\n  context around first match (offset %d, total matches: %d): %q", idx, count, ctx)
+}
+
+// lineEndingHint returns a human-readable description of line-ending
+// mismatch between the search text and the file content, so the caller
+// doesn't have to eyeball \r\n vs \n in the raw previews.
+func lineEndingHint(content, old string) string {
+	fCRLF := strings.Contains(content, "\r\n")
+	fCR := strings.Contains(content, "\r") && !fCRLF
+	oCRLF := strings.Contains(old, "\r\n")
+	oCR := strings.Contains(old, "\r") && !oCRLF
+	oLF := strings.Contains(old, "\n") && !oCRLF && !oCR
+	fLF := strings.Contains(content, "\n") && !fCRLF && !fCR
+
+	// Only surface a hint when both contain newlines and they differ.
+	switch {
+	case oLF && fCRLF:
+		return "line endings differ: search text uses LF, but the file uses CRLF"
+	case oCRLF && fLF:
+		return "line endings differ: search text uses CRLF, but the file uses LF"
+	case oCR && !fCR && !fCRLF:
+		return "line endings differ: search text uses CR, but the file does not"
+	default:
+		return ""
+	}
 }

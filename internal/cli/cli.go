@@ -394,7 +394,11 @@ func runInfo(args []string, jsonOut bool) int {
 	if jsonOut {
 		printJSON(info)
 	} else {
-		fmt.Printf("%s/%s  host=%s  version=%s  fence=%q\n", info.OS, info.Arch, info.Hostname, info.Version, info.Fence)
+		fenceStr := info.Fence
+		if fenceStr == "" {
+			fenceStr = "none (FULL access)"
+		}
+		fmt.Printf("%s/%s  host=%s  version=%s  fence=%q\n", info.OS, info.Arch, info.Hostname, info.Version, fenceStr)
 	}
 	return 0
 }
