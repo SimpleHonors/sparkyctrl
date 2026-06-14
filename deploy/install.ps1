@@ -117,6 +117,10 @@ if ($Binary) {
     # can confirm the upgrade landed without a separate info call.
     try {
         $ver = & $dest @("--version") 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error "downloaded binary failed to execute (exit code $LASTEXITCODE)"
+            exit 1
+        }
         Info "downloaded sparkyctrl version: $ver"
     } catch {
         Write-Error "downloaded binary does not appear to be executable: $_"
