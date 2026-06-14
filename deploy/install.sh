@@ -172,7 +172,11 @@ else
       curl -fsSL "https://raw.githubusercontent.com/${REPO}/master/deploy/install.sh" -o "$UPGRADE_SCRIPT" 2>/dev/null
       if [ -s "$UPGRADE_SCRIPT" ]; then
         chmod +x "$UPGRADE_SCRIPT"
-        nohup "$UPGRADE_SCRIPT" "${ORIG_ARGS[@]}" > /tmp/sparkyctrl-upgrade.log 2>&1 &
+        # Run detached in a new systemd scope to escape the sparkyctrl service
+        # cgroup — otherwise systemctl stop kills us along with the worker.
+        systemd-run --quiet --no-block --scope --collect \
+          bash "$UPGRADE_SCRIPT" "${ORIG_ARGS[@]}" \
+          > /tmp/sparkyctrl-upgrade.log 2>&1
         echo "==> running under sparkyctrl — install detached to background"
         echo "==> sparkyctrl will restart in a few seconds (check /tmp/sparkyctrl-upgrade.log)"
         exit 0
