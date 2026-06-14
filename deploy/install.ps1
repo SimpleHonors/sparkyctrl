@@ -98,9 +98,14 @@ if ($existing) {
         $currentPid = $parent.ParentProcessId
     }
     if ($detach) {
-        $upgradeScript = Join-Path $env:TEMP "sparkyctrl-upgrade-$(Get-Random).ps1"
-        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$Repo/master/deploy/install.ps1" -OutFile $upgradeScript -UseBasicParsing
-        Start-Process -FilePath powershell -ArgumentList @("-NoProfile", "-File", $upgradeScript, "-Start") -WindowStyle Hidden
+        # Re-spawn ourselves as a background job that survives the sparkyctrl
+        # task termination. Start-Process is unreliable from a SYSTEM session.
+        $scriptBlock = {
+            $ProgressPreference = 'SilentlyContinue'
+            irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile $env:TEMP\install.ps1
+            & $env:TEMP\install.ps1 -NoFence -Start
+        }
+        Start-Job -ScriptBlock $scriptBlock | Out-Null
         Info "running under sparkyctrl -- install detached to background"
         Info "sparkyctrl will restart in a few seconds"
         exit 0
