@@ -5,7 +5,7 @@
 > ## ☢️ STOP. READ THIS BEFORE YOU SCROLL.
 >
 > This is a **remote-code-execution daemon you install on purpose.** It runs commands as
-> **root**, over the network, with **no real authentication.** If that sentence did not make
+> **root**, over the network, with **token authentication by default.** If that sentence did not make
 > you wince, you are precisely the person who should not run this.
 >
 > There is a **~99% chance the correct move is to close this tab.** We mean it. Keep reading
@@ -48,8 +48,9 @@ safe.**
 
 Read this part twice.
 
-- **Not authenticated.** There is an optional shared token. That is it. No users, no roles, no
-  TLS, no meaningful rate limiting. The token is a speed bump, not a wall.
+- **Not a general security product.** The worker uses a single shared token by default and
+  supports `--no-auth` for lab setups. There are no users, no roles, no meaningful rate
+  limiting, and no TLS in this release. The token is a speed bump, not a wall.
 - **Not contained.** `exec`/`shell` run as root with the full capability set. They can read
   `/etc/shadow`, rewrite `/etc/sudoers`, and yes, halt the machine. The fence governs the *file*
   verbs only, and only if you opt in.
@@ -72,7 +73,9 @@ Read this part twice.
 
 The installer **asks where to fence the worker's file operations** — it does not bake in a
 path. Answer the prompt with a directory to confine to, or `none` for full filesystem access;
-or pass `--fence DIR` / `--no-fence` up front for an unattended install.
+or pass `--fence DIR` / `--no-fence` up front for an unattended install. It also generates a
+worker token file by default and prints a matching `SPARKYCTRL_TOKEN` export snippet for the
+client side.
 
 **Linux** — installs as **root** and starts listening:
 
@@ -102,7 +105,8 @@ Flags are parallel across platforms (Linux `--lower-case`, Windows `-PascalCase`
 | full access (no fence) | `--no-fence` | `-NoFence` |
 | listen address | `--addr H:P` | `-Addr H:P` |
 | audit log path | `--audit FILE` | `-Audit FILE` |
-| shared token | `--token T` | `-Token T` |
+| override token | `--token T` | `-Token T` |
+| disable auth | `--no-auth` | `-NoAuth` |
 | release version | `--version V` | `-Version V` |
 | use a local binary | `--binary PATH` | `-Binary PATH` |
 | start now | `--start` | `-Start` |
@@ -131,6 +135,7 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
   mismatches (CRLF vs LF, missing whitespace) are immediately visible without re-reading the file.
   Multiline or binaryish strings use `--old-file PATH` / `--new-file PATH` in place of `--old`/`--new`.
 - `sparkyctrl info  <host>` — worker info.
+- `sparkyctrl mcp` — stdio MCP server that wraps the client verbs for MCP-capable apps.
 - `sparkyctrl --version` — print the version.
 
 `<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
@@ -150,4 +155,4 @@ Design details live in `docs/superpowers/specs/`.
 
 ## Status
 
-v0.1.4 — public. Built, tested, and running on exactly one person's trusted LAN.
+v0.1.12 — public. Built, tested, and running on exactly one person's trusted LAN.

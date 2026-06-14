@@ -13,7 +13,8 @@
 #   --container     hardened mode inside an unprivileged LXC (drop mount-namespace isolation)
 #   --addr H:P      listen address (default 0.0.0.0:7766)
 #   --audit FILE    audit log path
-#   --token T       optional shared token
+#   --token T       explicit worker token (otherwise generate or reuse the token file)
+#   --no-auth       disable token authentication entirely
 #   --binary PATH   install this local binary instead of downloading the release
 #   --version V     release version to download (default: latest)
 #   --start         start the worker now
@@ -34,6 +35,7 @@ FENCE=""
 NO_FENCE=0
 AUDIT="/var/log/sparkyctrl-audit.log"
 TOKEN=""
+NO_AUTH=0
 BINARY=""
 VERSION="${SPARKYCTRL_VERSION:-latest}"
 REPO="${SPARKYCTRL_REPO:-SimpleHonors/sparkyctrl}"
@@ -47,6 +49,15 @@ WAS_ACTIVE=0
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 usage() { awk 'NR>2 && /^#/ {sub(/^# ?/,""); print; next} NR>2 {exit}' "$0"; }
+gen_token() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 32
+  elif command -v od >/dev/null 2>&1; then
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+  else
+    die "need openssl or od to generate a worker token"
+  fi
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -56,6 +67,7 @@ while [ $# -gt 0 ]; do
     --no-fence)  NO_FENCE=1; shift ;;
     --audit)     AUDIT="${2:-}"; shift 2 ;;
     --token)     TOKEN="${2:-}"; shift 2 ;;
+    --no-auth)   NO_AUTH=1; shift ;;
     --binary)    BINARY="${2:-}"; shift 2 ;;
     --version)   VERSION="${2:-}"; shift 2 ;;
     --repo)      REPO="${2:-}"; shift 2 ;;
@@ -190,10 +202,38 @@ else
   echo "==> installed binary: $BINARY -> $DEST"
 fi
 
+# Resolve the worker auth material. The token file is the source of truth when auth is enabled.
+TOKEN_PATH="/etc/sparkyctrl/token"
+TOKEN_DIR="$(dirname "$TOKEN_PATH")"
+TOKEN_OWNER="root:root"
+TOKEN_MODE="0600"
+if [ "$MODE" = hardened ]; then
+  TOKEN_OWNER="${SVC_USER}:${SVC_USER}"
+fi
+
+if [ "$NO_AUTH" -eq 0 ]; then
+  if [ -n "$TOKEN" ]; then
+    WORKER_TOKEN="$TOKEN"
+    TOKEN_SOURCE="override"
+  elif [ -s "$TOKEN_PATH" ]; then
+    WORKER_TOKEN="$(tr -d '\r\n' < "$TOKEN_PATH")"
+    TOKEN_SOURCE="existing"
+  else
+    WORKER_TOKEN="$(gen_token)"
+    TOKEN_SOURCE="generated"
+  fi
+  [ -n "$WORKER_TOKEN" ] || die "worker token was empty"
+  mkdir -p "$TOKEN_DIR"
+  printf '%s' "$WORKER_TOKEN" > "$TOKEN_PATH"
+  chmod "$TOKEN_MODE" "$TOKEN_PATH"
+  echo "==> auth token ($TOKEN_SOURCE): $WORKER_TOKEN"
+  echo "==> export SPARKYCTRL_TOKEN=\"$WORKER_TOKEN\""
+fi
+
 # Assemble the serve arguments.
 SERVE_ARGS="--addr ${ADDR} --audit ${AUDIT}"
 [ -n "$FENCE" ] && SERVE_ARGS="${SERVE_ARGS} --fence ${FENCE}"
-[ -n "$TOKEN" ] && SERVE_ARGS="${SERVE_ARGS} --token ${TOKEN}"
+[ "$NO_AUTH" -eq 1 ] && SERVE_ARGS="${SERVE_ARGS} --no-auth"
 
 [ -n "$FENCE" ] && mkdir -p "$FENCE"
 touch "$AUDIT"
@@ -268,6 +308,11 @@ SystemCallArchitectures=native
 [Install]
 WantedBy=multi-user.target
 EOF
+fi
+
+if [ "$NO_AUTH" -eq 0 ]; then
+  chown "$TOKEN_OWNER" "$TOKEN_DIR" "$TOKEN_PATH" 2>/dev/null || true
+  chmod 0700 "$TOKEN_DIR" 2>/dev/null || true
 fi
 
 if [ -n "$FENCE" ]; then FENCE_DESC="fence=$FENCE"; else FENCE_DESC="no fence (FULL access)"; fi

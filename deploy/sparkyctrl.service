@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# Adjust --fence/--token/--audit per host. Bind to the LAN address.
+# Adjust --fence/--token/--audit per host. Default auth reads /etc/sparkyctrl/token.
 ExecStart=/usr/local/bin/sparkyctrl serve --addr 0.0.0.0:7766 --audit /var/log/sparkyctrl-audit.log
 Restart=on-failure
 RestartSec=3

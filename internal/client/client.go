@@ -76,6 +76,16 @@ func (c *Client) Ls(path string) (protocol.LsResponse, error) {
 	return out, err
 }
 
+// Read fetches a remote file's bytes.
+func (c *Client) Read(path string) ([]byte, error) {
+	return c.Download(path)
+}
+
+// Write sends bytes to a remote file using the standard write mode.
+func (c *Client) Write(path string, data []byte) error {
+	return c.Upload(path, 0o644, data)
+}
+
 // Edit performs a surgical exact-string replacement on a remote file.
 func (c *Client) Edit(req protocol.EditRequest) (protocol.EditResponse, error) {
 	var out protocol.EditResponse

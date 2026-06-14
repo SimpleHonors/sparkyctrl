@@ -11,8 +11,8 @@
     Use -Uninstall to remove the task and firewall rule.
 
     WARNING: this installs a SYSTEM-level (root-equivalent) remote-code-execution daemon that
-    listens on your network with no real authentication. Trusted LAN only. Read the README
-    before you run this. There is no undo beyond -Uninstall and regret.
+    listens on your network with token authentication by default. Trusted LAN only. Read the
+    README before you run this. There is no undo beyond -Uninstall and regret.
 
 .EXAMPLE
     .\install.ps1 -Fence C:\share -Start
@@ -26,6 +26,7 @@ param(
     [string]$Fence       = "",
     [string]$Audit       = "C:\ProgramData\sparkyctrl\audit.log",
     [string]$Token       = "",
+    [switch]$NoAuth,
     [string]$Binary      = "",
     [string]$Version     = "latest",
     [string]$Repo        = "SimpleHonors/sparkyctrl",
@@ -41,8 +42,20 @@ $ErrorActionPreference = "Stop"
 # Windows PowerShell. Silence it so the install never appears to hang mid-download.
 $ProgressPreference = "SilentlyContinue"
 function Info($m) { Write-Host "==> $m" }
+function New-WorkerToken {
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
+}
+function Set-RestrictedAcl($Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    & icacls $Path /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" | Out-Null
+}
 
 $port = ($Addr -split ":")[-1]
+$authDir = Join-Path $Env:ProgramData "sparkyctrl"
+$tokenPath = Join-Path $authDir "token.txt"
 
 if ($Uninstall) {
     if (Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue) {
@@ -52,6 +65,12 @@ if ($Uninstall) {
     } else { Info "no scheduled task '$ServiceName' found" }
     Get-NetFirewallRule -DisplayName "sparkyctrl ($port)" -ErrorAction SilentlyContinue |
         Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tokenPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $authDir) {
+        try {
+            Remove-Item -LiteralPath $authDir -Force -ErrorAction SilentlyContinue
+        } catch { }
+    }
     Info "left the binary + data in $InstallDir (delete manually if you want them gone)."
     return
 }
@@ -162,19 +181,40 @@ if ($Binary) {
 if ($Fence) { New-Item -ItemType Directory -Force -Path $Fence | Out-Null }
 New-Item -ItemType Directory -Force -Path (Split-Path $Audit) | Out-Null
 
-# 3. Assemble the serve arguments.
+# 3. Resolve the worker auth material.
+if (-not $NoAuth) {
+    New-Item -ItemType Directory -Force -Path $authDir | Out-Null
+    if ($Token) {
+        $workerToken = $Token
+        $tokenSource = "override"
+    } elseif (Test-Path -LiteralPath $tokenPath) {
+        $workerToken = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
+        $tokenSource = "existing"
+    } else {
+        $workerToken = New-WorkerToken
+        $tokenSource = "generated"
+    }
+    if (-not $workerToken) { throw "worker token was empty" }
+    Set-Content -LiteralPath $tokenPath -NoNewline -Value $workerToken -Encoding ascii
+    Set-RestrictedAcl $authDir
+    Set-RestrictedAcl $tokenPath
+    Info "auth token ($tokenSource): $workerToken"
+    Info "`$Env:SPARKYCTRL_TOKEN = `"$workerToken`""
+}
+
+# 4. Assemble the serve arguments.
 $serveArgs = @("serve", "--addr", $Addr, "--audit", "`"$Audit`"")
 if ($Fence) { $serveArgs += @("--fence", "`"$Fence`"") }
-if ($Token) { $serveArgs += @("--token", $Token) }
+if ($NoAuth) { $serveArgs += @("--no-auth") }
 
-# 4. Firewall: allow the port inbound on the Private profile only (never Public/internet).
+# 5. Firewall: allow the port inbound on the Private profile only (never Public/internet).
 Get-NetFirewallRule -DisplayName "sparkyctrl ($port)" -ErrorAction SilentlyContinue |
     Remove-NetFirewallRule -ErrorAction SilentlyContinue
 New-NetFirewallRule -DisplayName "sparkyctrl ($port)" -Direction Inbound -Action Allow `
     -Protocol TCP -LocalPort $port -Profile Private -ErrorAction SilentlyContinue | Out-Null
 Info "firewall: allowed inbound TCP $port on the Private profile"
 
-# 5. Register a boot-start, auto-restarting Scheduled Task running as SYSTEM.
+# 6. Register a boot-start, auto-restarting Scheduled Task running as SYSTEM.
 $action    = New-ScheduledTaskAction -Execute $dest -Argument ($serveArgs -join " ")
 $trigger   = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest

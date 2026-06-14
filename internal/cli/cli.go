@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/SimpleHonors/sparkyctrl/internal/client"
+	"github.com/SimpleHonors/sparkyctrl/internal/mcp"
 	"github.com/SimpleHonors/sparkyctrl/internal/protocol"
 	"github.com/SimpleHonors/sparkyctrl/internal/server"
 )
@@ -19,7 +20,8 @@ import (
 const usage = `sparkyctrl - mangle-proof remote sysadmin for AI agents
 
 WORKER (run on a target machine):
-  sparkyctrl serve [--addr 0.0.0.0:7766] [--fence /path] [--token X] [--audit /path/audit.log]
+  sparkyctrl serve [--addr 0.0.0.0:7766] [--fence /path] [--token X] [--no-auth]
+                   [--audit /path/audit.log]
 
 CLIENT (run from the agent side):
   sparkyctrl exec  <host> -- <argv...>     run a command (no shell, mangle-proof)
@@ -35,10 +37,11 @@ CLIENT (run from the agent side):
                                            exact-string edit of a remote file
                                            (--old-file/--new-file for multiline)
   sparkyctrl info  <host>                  show worker info
+  sparkyctrl mcp                           stdio MCP server wrapping the client
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
-Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (shared token).
+Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (client auth token).
 
   sparkyctrl --version                 print version`
 
@@ -126,6 +129,8 @@ func Run(args []string) int {
 	switch verb {
 	case "serve":
 		return runServe(rest)
+	case "mcp":
+		return runMCP(rest)
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return 0
@@ -440,7 +445,8 @@ func runServe(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := fs.String("addr", "0.0.0.0:"+strconv.Itoa(protocol.DefaultPort), "listen address host:port")
 	fence := fs.String("fence", "", "restrict file ops to this directory")
-	token := fs.String("token", os.Getenv("SPARKYCTRL_TOKEN"), "optional shared token")
+	token := fs.String("token", "", "explicit shared token override")
+	noAuth := fs.Bool("no-auth", false, "disable token authentication")
 	auditPath := fs.String("audit", "", "audit log file path")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -449,13 +455,32 @@ func runServe(args []string) int {
 	if err != nil {
 		return fail("audit log: " + err.Error())
 	}
-	h := &server.Handler{Fence: *fence, Token: *token, Audit: auditor}
-	fmt.Printf("sparkyctrl %s listening on %s (fence=%q token=%v audit=%q)\n",
-		protocol.Version, *addr, *fence, *token != "", *auditPath)
+	effectiveToken, authMode, authSource, err := server.ResolveAuth(*noAuth, *token)
+	if err != nil {
+		return fail(err.Error())
+	}
+	h := &server.Handler{Fence: *fence, Token: effectiveToken, Audit: auditor}
+	if authMode == "token-file" {
+		fmt.Printf("sparkyctrl %s listening on %s (fence=%q auth=%s path=%q audit=%q)\n",
+			protocol.Version, *addr, *fence, authMode, authSource, *auditPath)
+	} else {
+		fmt.Printf("sparkyctrl %s listening on %s (fence=%q auth=%s audit=%q)\n",
+			protocol.Version, *addr, *fence, authMode, *auditPath)
+	}
 	if strings.HasPrefix(*addr, "0.0.0.0:") || strings.HasPrefix(*addr, ":") {
 		fmt.Println("  note: listening on ALL interfaces (0.0.0.0) — intended for trusted LANs only, do not expose to the internet")
 	}
 	if err := h.Serve(*addr); err != nil {
+		return fail(err.Error())
+	}
+	return 0
+}
+
+func runMCP(args []string) int {
+	if len(args) != 0 {
+		return fail("usage: mcp")
+	}
+	if err := mcp.Run(os.Stdin, os.Stdout); err != nil {
 		return fail(err.Error())
 	}
 	return 0
