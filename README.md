@@ -4,53 +4,50 @@
 
 > ## 💡 What you need to know
 >
-> This is a remote-code-execution daemon for your **trusted LAN.** It runs commands as root with
-> a **shared token for auth.** If you expose it to the internet, you've published a root shell.
-> Read the security section before you install.
+> This is a **remote-code-execution daemon** you install on purpose. It runs commands as root
+> with a **shared token for auth**. It is built strictly for a **trusted LAN**. 
+> If you expose this port to the internet, you have not deployed a tool—you have published a root shell.
 >
-> It solves a real problem — AI agents are bad at shells — and it does it with a sharp tool
-> rather than a padded room. Know what you're installing.
+> It solves a real problem: AI agents are genuinely bad at shells. It does this by being a sharp 
+> tool rather than a padded room. Know exactly what you're installing.
 
 ## What this actually is
 
 sparkyctrl lets an AI agent run commands and move files on another machine with **no shell in
 the middle to mangle them.** Commands go out as a structured argument array straight to the OS
-`exec` call, so the quoting and escaping disasters that happen when an agent drives a box over
-SSH simply cannot.
+`exec` call. This prevents the quoting and escaping disasters that happen when an agent drives 
+a box over SSH.
 
 It's a sharp tool built for a specific operator on a specific network. `exec` and `shell` run as
-**root**, unfenced, by design — that is the product. The file verbs (read, write, edit, ls) can
-be confined to a directory via an opt-in fence. Authentication is a shared token generated at
-install time and required by default.
+**root**, unfenced, by design — that is the product, not an oversight. File verbs (read, write, 
+edit, ls) can be confined to a directory via an opt-in fence. Authentication is enforced via a 
+shared token generated at install time, which can be disabled if your network is your boundary.
 
 ## Should you use this?
 
-If you're on a trusted LAN and need AI agents to manage remote machines without shell-mangling
-disasters — maybe. Walk the checklist:
+If you're on a trusted LAN and need AI agents to manage remote machines reliably—walk the checklist:
 
 - Is the target on a **private, trusted LAN** with zero untrusted devices? → No → **close the tab.**
 - Is it **never, under any circumstances, reachable from the internet**? → No → **close the tab.**
-- Are you the **sole operator**, and do you trust **the agents** you point at it? → No → **close the tab.**
+- Are you the **sole operator**, and do you trust **every agent** you point at it? → No → **close the tab.**
 - Do you understand that the path "fence" is a **convenience, not a security boundary**, and that `exec` walks straight past it? → No → **close the tab.**
 
-If you answered yes to all four: you're the person this was built for.
+Still here? Good. You're the operator this was built for.
 
 ## Why this exists anyway
 
-AI agents are genuinely bad at shells. Every layer — local shell, SSH, the remote shell —
-re-parses a command, and one stray backtick or unquoted `$(...)` can turn "list the logs" into
-something that takes the machine down. (Tools in this exact genre have run `halt` on the wrong
-box because an agent pasted untrusted text into a shell. Ask us how we know.) sparkyctrl removes
-the shells from the default path so that class of bug cannot happen. That is the whole pitch: a
-sharp tool for a trusted operator on a trusted network — and **nothing about it pretends to be
-safe.**
+Every layer — local shell, SSH, the remote shell — re-parses a command. One stray backtick or unquoted 
+`$(...)` can turn "list the logs" into something that halts the machine. sparkyctrl removes the 
+shells from the default path so that class of bug physically cannot happen. 
 
 ## Security model
 
-- **Shared token by default.** The installer generates a random token, stores it on the worker, and prints it once. Clients set `SPARKYCTRL_TOKEN` to connect. Use `--no-auth` / `-NoAuth` for lab setups where the network itself is the boundary.
-- **No users, no roles, no TLS.** The token keeps honest agents honest on a trusted LAN. It is not a replacement for network isolation.
+Read this part twice.
+
+- **Shared token by default.** The installer generates a random token, stores it on the worker, and prints it once. Clients set `SPARKYCTRL_TOKEN` to connect. Use `--no-auth` / `-NoAuth` only for isolated lab setups.
+- **No users, no roles, no TLS.** The token keeps honest agents honest on a trusted LAN. It is a speed bump, not a replacement for network isolation.
 - **`exec`/`shell` are unfenced.** They run as root with the full capability set. The fence governs file verbs only. Real containment is OS-level: run the worker in a container.
-- **Not for the internet. Ever.** If this port is reachable from outside your LAN, you have not deployed a tool. You have published a root shell.
+- **Not for the internet. Ever.** 
 
 ---
 
@@ -59,7 +56,7 @@ safe.**
 The installer **asks where to fence the worker's file operations** — it does not bake in a
 path. Answer the prompt with a directory to confine to, or `none` for full filesystem access;
 or pass `--fence DIR` / `--no-fence` up front for an unattended install. It also generates a
-worker token file by default and prints a matching `SPARKYCTRL_TOKEN` export snippet for the
+worker token file by default and prints a matching `export SPARKYCTRL_TOKEN="..."` snippet for the
 client side.
 
 **Linux** — installs as **root** and starts listening:
