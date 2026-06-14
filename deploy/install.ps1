@@ -36,6 +36,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Invoke-WebRequest's progress bar makes downloads look frozen (and run far slower) on
+# Windows PowerShell. Silence it so the install never appears to hang mid-download.
+$ProgressPreference = "SilentlyContinue"
 function Info($m) { Write-Host "==> $m" }
 
 $port = ($Addr -split ":")[-1]

@@ -91,6 +91,7 @@ The bash installer is Linux-only; on Windows use the PowerShell installer. In an
 PowerShell:
 
 ```powershell
+$ProgressPreference = 'SilentlyContinue'   # else the download progress bar can look frozen
 irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1
 .\install.ps1 -Fence C:\share -Start
 ```
