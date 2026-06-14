@@ -32,7 +32,8 @@ param(
     [string]$InstallDir  = "$Env:ProgramFiles\sparkyctrl",
     [string]$ServiceName = "sparkyctrl",
     [switch]$Start,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$NoFence
 )
 
 $ErrorActionPreference = "Stop"
@@ -53,6 +54,19 @@ if ($Uninstall) {
         Remove-NetFirewallRule -ErrorAction SilentlyContinue
     Info "left the binary + data in $InstallDir (delete manually if you want them gone)."
     return
+}
+
+# Fence decision must be explicit — no fence means FULL filesystem access, so never
+# default to that silently. Prompt when interactive; require -Fence/-NoFence when input
+# is redirected (e.g. irm | iex), where we cannot prompt.
+if (-not $Fence -and -not $NoFence) {
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+        $ans = Read-Host "Fence file operations to a directory? Enter a path, or blank for FULL filesystem access"
+        if ($ans) { $Fence = $ans }
+    } else {
+        Write-Error "no fence specified: pass -Fence <dir> to confine file operations, or -NoFence for full access"
+        exit 1
+    }
 }
 
 # 1. Resolve the binary. An explicit -Binary uses a local file; otherwise download the

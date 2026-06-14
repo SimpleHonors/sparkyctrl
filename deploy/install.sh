@@ -12,8 +12,11 @@
 # /etc/systemd/system/sparkyctrl.service. Re-run any time to switch modes.
 #
 # Usage:
-#   sudo ./deploy/install.sh --mode admin   [--addr H:P] [--fence DIR] [--audit FILE] [--token T] [--start]
+#   sudo ./deploy/install.sh --mode admin   (--fence DIR | --no-fence) [--addr H:P] [--audit FILE] [--token T] [--start]
 #   sudo ./deploy/install.sh --mode hardened --fence DIR [--addr H:P] [--audit FILE] [--token T] [--container] [--start]
+#
+# Admin mode requires an explicit fence choice: --fence DIR confines file ops to DIR;
+# --no-fence grants FULL filesystem access. Run interactively without either and it prompts.
 #
 # --container omits the mount-namespace filesystem isolation (ProtectSystem etc.)
 # that an unprivileged LXC cannot set up; keeps the non-root / no-caps hardening.
@@ -31,6 +34,7 @@ UNIT="/etc/systemd/system/sparkyctrl.service"
 DO_ENABLE=1
 DO_START=0
 CONTAINER=0
+NO_FENCE=0
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
     --start)    DO_START=1; shift ;;
     --no-enable) DO_ENABLE=0; shift ;;
     --container) CONTAINER=1; shift ;;
+    --no-fence) NO_FENCE=1; shift ;;
     -h|--help)  usage; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -56,6 +61,18 @@ done
 case "$MODE" in admin|hardened) ;; *) die "--mode must be 'admin' or 'hardened'" ;; esac
 [ "$MODE" = hardened ] && [ -z "$FENCE" ] && die "hardened mode requires --fence <dir> (it is the only writable area)"
 [ "$(id -u)" -eq 0 ] || die "must run as root (writes /usr/local/bin and /etc/systemd/system)"
+
+# Admin mode: the fence decision must be explicit — no fence means FULL filesystem
+# access, so never default to that silently. Prompt when interactive; require an
+# explicit --fence/--no-fence when piped (e.g. curl | bash), where we can't prompt.
+if [ "$MODE" = admin ] && [ -z "$FENCE" ] && [ "$NO_FENCE" -ne 1 ]; then
+  if [ -t 0 ]; then
+    printf 'Fence file operations to a directory? Enter a path, or leave blank for FULL filesystem access: '
+    read -r FENCE
+  else
+    die "no fence specified: pass --fence <dir> to confine file operations, or --no-fence for full access"
+  fi
+fi
 
 # Reuse an already-installed binary at its absolute path if present, but NEVER auto-pick
 # a binary from the current directory — a planted ./sparkyctrl would otherwise be installed

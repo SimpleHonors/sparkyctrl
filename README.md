@@ -75,7 +75,9 @@ curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/depl
   | sudo bash -s -- --mode admin --fence /srv/share --start
 ```
 
-That installs the worker as **root** (admin mode) and starts it listening. Want to be slightly
+That installs the worker as **root** (admin mode) and starts it listening. Admin mode makes
+you choose the fence explicitly — `--fence DIR` to confine file operations, or `--no-fence`
+for full filesystem access (run the installer in a terminal without either and it asks). Want to be slightly
 less reckless? Swap `--mode admin` for **`--mode hardened`** — a dedicated unprivileged user,
 zero capabilities, a read-only filesystem except the fence and audit log, and `exec`/`shell`
 that no longer run as root. Inside an unprivileged LXC, add `--container` (the mount-namespace
