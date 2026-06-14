@@ -52,6 +52,27 @@ function Set-RestrictedAcl($Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     & icacls $Path /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" | Out-Null
 }
+function Get-RelaunchArgs {
+    $out = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath)
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) {
+        switch ($entry.Key) {
+            "Addr"        { $out += @("-Addr", $entry.Value) }
+            "Fence"       { if ($entry.Value) { $out += @("-Fence", $entry.Value) } }
+            "Audit"       { $out += @("-Audit", $entry.Value) }
+            "Token"       { if ($entry.Value) { $out += @("-Token", $entry.Value) } }
+            "NoAuth"      { if ($entry.Value) { $out += "-NoAuth" } }
+            "Binary"      { if ($entry.Value) { $out += @("-Binary", $entry.Value) } }
+            "Version"     { $out += @("-Version", $entry.Value) }
+            "Repo"        { $out += @("-Repo", $entry.Value) }
+            "InstallDir"  { $out += @("-InstallDir", $entry.Value) }
+            "ServiceName" { $out += @("-ServiceName", $entry.Value) }
+            "Start"       { if ($entry.Value) { $out += "-Start" } }
+            "Uninstall"   { if ($entry.Value) { $out += "-Uninstall" } }
+            "NoFence"     { if ($entry.Value) { $out += "-NoFence" } }
+        }
+    }
+    return $out
+}
 
 $port = ($Addr -split ":")[-1]
 $authDir = Join-Path $Env:ProgramData "sparkyctrl"
@@ -119,14 +140,9 @@ if ($existing) {
     if ($detach) {
         # Re-spawn ourselves as an independent OS-level process that survives
         # the sparkyctrl task termination. Start-Process/Start-Job both die
-        # with the parent; System.Diagnostics.Process.Start creates a truly
-        # independent process.
-        $psi = New-Object System.Diagnostics.ProcessStartInfo
-        $psi.FileName = "powershell.exe"
-        $psi.Arguments = "-NoProfile -Command `"`$ProgressPreference='SilentlyContinue'; irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile `$env:TEMP\install.ps1; & `$env:TEMP\install.ps1 -NoFence -Start`""
-        $psi.UseShellExecute = $false
-        $psi.CreateNoWindow = $true
-        [System.Diagnostics.Process]::Start($psi) | Out-Null
+        # with the parent; a detached PowerShell process does not.
+        $relaunchArgs = Get-RelaunchArgs
+        Start-Process -FilePath "powershell.exe" -ArgumentList $relaunchArgs -WindowStyle Hidden | Out-Null
         Info "running under sparkyctrl -- install detached to background"
         Info "sparkyctrl will restart in a few seconds"
         exit 0

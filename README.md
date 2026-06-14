@@ -155,4 +155,4 @@ Design details live in `docs/superpowers/specs/`.
 
 ## Status
 
-v0.1.12 — public. Built, tested, and running on exactly one person's trusted LAN.
+v0.1.13 — public. Built, tested, and running on exactly one person's trusted LAN.
