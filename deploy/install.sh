@@ -57,11 +57,11 @@ case "$MODE" in admin|hardened) ;; *) die "--mode must be 'admin' or 'hardened'"
 [ "$MODE" = hardened ] && [ -z "$FENCE" ] && die "hardened mode requires --fence <dir> (it is the only writable area)"
 [ "$(id -u)" -eq 0 ] || die "must run as root (writes /usr/local/bin and /etc/systemd/system)"
 
-# Locate the binary if not given.
-if [ -z "$BINARY" ]; then
-  for c in ./dist/sparkyctrl-linux-amd64 ./dist/sparkyctrl-linux-arm64 ./sparkyctrl /usr/local/bin/sparkyctrl; do
-    [ -x "$c" ] && { BINARY="$c"; break; }
-  done
+# Reuse an already-installed binary at its absolute path if present, but NEVER auto-pick
+# a binary from the current directory — a planted ./sparkyctrl would otherwise be installed
+# and run as root. For a local build, pass --binary <path> explicitly.
+if [ -z "$BINARY" ] && [ -x /usr/local/bin/sparkyctrl ]; then
+  BINARY="/usr/local/bin/sparkyctrl"
 fi
 # If no local binary was found, download the published release binary.
 # Public repo → no auth needed. Override repo/version via SPARKYCTRL_REPO / SPARKYCTRL_VERSION.

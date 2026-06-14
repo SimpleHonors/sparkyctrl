@@ -52,16 +52,17 @@ if ($Uninstall) {
     return
 }
 
-# 1. Resolve the binary: explicit -Binary, then a local build, else download the release.
+# 1. Resolve the binary. An explicit -Binary uses a local file; otherwise download the
+#    release. We deliberately do NOT auto-pick a binary from the current directory: a
+#    planted .\sparkyctrl.exe would otherwise be installed and run as SYSTEM.
 $dest = Join-Path $InstallDir "sparkyctrl.exe"
-if (-not $Binary) {
-    foreach ($c in @(".\dist\sparkyctrl-windows-amd64.exe", ".\sparkyctrl.exe", $dest)) {
-        if (Test-Path $c) { $Binary = $c; break }
-    }
-}
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-if (-not $Binary) {
+if ($Binary) {
+    $src = (Resolve-Path -LiteralPath $Binary).Path
+    Copy-Item -LiteralPath $src -Destination $dest -Force
+    Info "installed binary: $src -> $dest"
+} else {
     if ($Version -eq "latest") {
         $url = "https://github.com/$Repo/releases/latest/download/sparkyctrl-windows-amd64.exe"
     } else {
@@ -69,14 +70,6 @@ if (-not $Binary) {
     }
     Info "downloading $url"
     Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
-} else {
-    $src = (Resolve-Path $Binary).Path
-    if ($src -ne $dest) {
-        Copy-Item -Path $src -Destination $dest -Force
-        Info "installed binary: $src -> $dest"
-    } else {
-        Info "binary already in place: $dest"
-    }
 }
 
 # 2. Make sure the fence and audit-log locations exist.
