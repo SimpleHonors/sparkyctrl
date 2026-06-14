@@ -106,7 +106,7 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
   mismatches (CRLF vs LF, missing whitespace) are immediately visible without re-reading the file.
   Multiline or binaryish strings use `--old-file PATH` / `--new-file PATH` in place of `--old`/`--new`.
 - `sparkyctrl info  <host>` — worker info.
-- `sparkyctrl mcp` — stdio MCP server that wraps the client verbs for MCP-capable apps.
+- `sparkyctrl mcp` — stdio MCP server (see MCP section below).
 - `sparkyctrl --version` — print the version.
 
 `<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
@@ -134,7 +134,7 @@ CLI required. It's a local stdio server, not a network service. It reuses your e
 
 **Tools exposed:** `exec`, `shell`, `read`, `write`, `edit`, `ls`, `info` — each takes a `host`
 parameter plus verb-specific arguments. Token auth passes through automatically from the
-environment. Full reference: [[agent-onboarding-tools-and-mcps#sparkyctrl MCP mode]].
+environment. See the [[agent-onboarding-tools-and-mcps]] page for wiring examples.
 
 ## The audit log keeps receipts, not guarantees
 
