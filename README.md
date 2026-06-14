@@ -1,71 +1,116 @@
 # sparkyctrl
 
-A single-binary remote sysadmin tool built for AI agents on a trusted LAN.
+**A single-binary remote command-and-file daemon for AI agents on a trusted LAN.**
 
-It exists to kill one specific, expensive bug: **command mangling**. When an agent
-drives a machine over SSH, its commands get re-parsed by every shell along the way,
-and quoting/escaping mistakes can change what a command actually does — occasionally
-destructively. Sparkyctrl sends commands as a **structured argument array** straight to
-the OS exec call, with **no shell on the default path**, so that class of bug cannot
-happen.
+> ## ☢️ STOP. READ THIS BEFORE YOU SCROLL.
+>
+> This is a **remote-code-execution daemon you install on purpose.** It runs commands as
+> **root**, over the network, with **no real authentication.** If that sentence did not make
+> you wince, you are precisely the person who should not run this.
+>
+> There is a **~99% chance the correct move is to close this tab.** We mean it. Keep reading
+> only if you are the specific, paranoid, fully-consenting operator this was built for.
 
-## What it does
+## What this actually is
 
-- **`sparkyctrl serve`** — runs the worker daemon on a target machine (Linux, LXC, Docker,
-  VM, Windows, Unraid). One static binary, no dependencies.
-- **`sparkyctrl exec <host> -- <argv...>`** — run a command, mangle-proof, get
-  stdout/stderr/exit code back.
-- **`sparkyctrl shell <host> <script>`** — explicit, logged shell path for pipes/globs/etc.
-- **`sparkyctrl read|write|ls|push|pull <host> ...`** — binary-safe file operations.
-- **`sparkyctrl edit <host> <remote> --old X --new Y [--all]`** — surgical exact-string
-  replacement in a remote file (refuses on no-match or non-unique match; atomic write).
+sparkyctrl lets an AI agent run commands and move files on another machine with **no shell in
+the middle to mangle them.** Commands go out as a structured argument array straight to the OS
+`exec` call, so the quoting and escaping disasters that happen when an agent drives a box over
+SSH simply cannot.
 
-LAN-only, single-user, no authentication system by design (optional shared token).
-Driven from the terminal as a CLI, so it adds ~nothing to an agent's context budget.
+It solves a real problem. It solves it by being a loaded gun with the safety welded off. To put
+it plainly: **it is a backdoor, and we built it that way on purpose.** `exec` and `shell` run as
+**root**, unfenced, by design. That is not an oversight we intend to fix. That is the product.
 
-**Philosophy:** a sharp tool for a trusted operator — *if you want to do stupid
-things, we won't stop you.* No guardrails beyond an opt-in path fence; the audit log
-keeps receipts rather than preventing. See the design spec's "Design philosophy".
+## Should you use this? (Almost certainly not.)
 
-See `docs/superpowers/specs/` for the design spec.
+Walk the checklist. Any **No** means *close the tab.*
 
-## Install
+- Is the target on a **private, trusted LAN** with zero untrusted devices on it? → No → **close the tab.**
+- Is it **never, under any circumstances, reachable from the internet**? → No → **close the tab.**
+- Are you the **sole operator**, and do you trust **every agent** you will ever point at it? → No → **close the tab.**
+- Would you hand a **stranger a root shell** on this machine? Because that is the threat model the instant any assumption above is wrong. → No → **close the tab.**
+- Do you understand that the path "fence" is a **convenience, not a security boundary**, and that `exec` walks straight past it? → No → **close the tab.**
 
-**One-liner** (downloads the prebuilt binary, installs the worker in admin mode, starts it):
+Still here? Suspicious. But fine.
+
+## Why this exists anyway
+
+AI agents are genuinely bad at shells. Every layer — local shell, SSH, the remote shell —
+re-parses a command, and one stray backtick or unquoted `$(...)` can turn "list the logs" into
+something that takes the machine down. (Tools in this exact genre have run `halt` on the wrong
+box because an agent pasted untrusted text into a shell. Ask us how we know.) sparkyctrl removes
+the shells from the default path so that class of bug cannot happen. That is the whole pitch: a
+sharp tool for a trusted operator on a trusted network — and **nothing about it pretends to be
+safe.**
+
+## What it is **not**
+
+Read this part twice.
+
+- **Not authenticated.** There is an optional shared token. That is it. No users, no roles, no
+  TLS, no meaningful rate limiting. The token is a speed bump, not a wall.
+- **Not contained.** `exec`/`shell` run as root with the full capability set. They can read
+  `/etc/shadow`, rewrite `/etc/sudoers`, and yes, halt the machine. The fence governs the *file*
+  verbs only, and only if you opt in.
+- **Not a security boundary.** The fence is symlink-safe and handy for keeping file ops tidy. It
+  is **not** what stands between an attacker and your host. The real wall is **OS-level
+  isolation** — run the worker in a container with only the shares you mean to expose
+  bind-mounted in.
+- **Not for the internet. Ever.** If this port is reachable from outside your LAN, you have not
+  deployed a tool. You have published a root shell.
+
+---
+
+> ## ☢️ LAST CHANCE.
+>
+> The command below installs a **root-level remote shell** and sets it **listening on your
+> network.** This is the dangerous thing. There is no undo — only `systemctl stop` and regret.
+> By running it you accept every inevitability described above.
+
+## Install (you were warned)
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.sh \
   | sudo bash -s -- --mode admin --fence /srv/share --start
 ```
 
-Add `--mode hardened` (and `--container` inside an unprivileged LXC) for the locked-down,
-non-root file-only mode. The script auto-downloads the right binary for your CPU from the
-latest release; override with `SPARKYCTRL_VERSION` or a local `--binary <path>`.
+That installs the worker as **root** (admin mode) and starts it listening. Want to be slightly
+less reckless? Swap `--mode admin` for **`--mode hardened`** — a dedicated unprivileged user,
+zero capabilities, a read-only filesystem except the fence and audit log, and `exec`/`shell`
+that no longer run as root. Inside an unprivileged LXC, add `--container` (the mount-namespace
+isolation cannot be set up there).
 
-`deploy/install.sh` drops the binary and a systemd unit, choosing the worker's
-privilege **mode** at install time:
+The installer auto-downloads the right prebuilt binary for your CPU from the latest release.
+Re-run any time to switch modes. `./deploy/install.sh --help` lists every flag (`--addr`,
+`--audit`, `--token`, `--user`, `--no-enable`). Build from source with `./deploy/build.sh`.
 
-```sh
-# Admin mode (default): worker runs as root, exec/shell unfenced — trusted sysadmin use.
-sudo ./deploy/install.sh --mode admin --fence /srv/share --start
+## Using it
 
-# Hardened mode: worker runs as an unprivileged user with zero capabilities and a
-# read-only filesystem except the fence + audit log. File-serving only (exec/shell
-# no longer run as root).
-sudo ./deploy/install.sh --mode hardened --fence /srv/share --start
+From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
 
-# In an unprivileged LXC, add --container: mount-namespace isolation can't be set up
-# there (the worker would die with 226/NAMESPACE), but the non-root / no-capability
-# hardening still applies.
-sudo ./deploy/install.sh --mode hardened --container --fence /srv/share --start
-```
+- `sparkyctrl exec  <host> -- <argv...>` — run a command, mangle-proof; stdout/stderr/exit code back.
+- `sparkyctrl shell <host> <script>` — explicit, logged shell path for pipes/globs/etc.
+- `sparkyctrl read|write|ls|push|pull <host> ...` — binary-safe file operations.
+- `sparkyctrl edit  <host> <remote> --old X --new Y [--all]` — surgical exact-string replacement (refuses on no-match or non-unique match; atomic write).
+- `sparkyctrl info  <host>` — worker info.
 
-Re-run any time to switch modes. Build the binary first with `./deploy/build.sh`
-(or pass `--binary <path>`). Run `./deploy/install.sh --help` for all flags
-(`--addr`, `--audit`, `--token`, `--user`, `--no-enable`).
+`<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
+verb for raw output.
+
+## The audit log keeps receipts, not guarantees
+
+Every request — including denied ones — is logged with its source IP and outcome. This tells you
+**what happened.** It does **not** prevent anything, and anyone with `exec` access can truncate
+the log through the same channel it audits. It is a flight recorder, not a seatbelt.
+
+## Philosophy
+
+A sharp tool for a trusted operator: *if you want to do something stupid, we will not stop you.*
+No guardrails beyond an opt-in fence; the audit log keeps receipts rather than preventing.
+Design details live in `docs/superpowers/specs/`.
 
 ## Status
 
-Implemented and in use. Core verbs, the opt-in path fence (symlink-safe), audit
-logging of denials with source IP, request hardening, and the surgical `edit`
-verb are built and tested.
+v0.1.0 — public. Built, tested, and running on exactly one person's trusted LAN. Use at your own
+considerable risk.
