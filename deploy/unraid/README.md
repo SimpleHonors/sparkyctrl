@@ -26,7 +26,7 @@ No working client token is required for this path — run it directly on the Unr
    This stages files to `/boot/config/sparkyctrl/`, generates a token if none exists, adds the
    `go` hook, and starts the worker immediately. Read the generated token from
    `/boot/config/sparkyctrl/token` and set it as `SPARKYCTRL_TOKEN` on your control box.
-3. Verify: `sparkyctrl ping <host>` from the control box.
+3. Verify: `sparkyctrl info <host>` from the control box.
 
 ## Updating later (from the control box)
 
@@ -45,6 +45,6 @@ Pushes the new binary to flash and bounces the worker; the supervisor relaunches
 
 ## Validation checklist
 
-- [ ] `install.sh` run; `sparkyctrl ping <host>` succeeds.
+- [ ] `install.sh` run; `sparkyctrl info <host>` succeeds.
 - [ ] Reboot the box; worker answers again with no manual steps.
 - [ ] `pkill -f 'sparkyctrl serve'` on the box; supervisor relaunches within ~30s.
