@@ -125,8 +125,13 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
 - `sparkyctrl shell <host> <script>` — explicit, logged shell path for pipes/globs/etc.
   (`cmd` on Windows, `/bin/sh` on Unix; trailing backslashes are preserved — quote paths with spaces).
 - `sparkyctrl read|write|ls|push|pull <host> ...` — binary-safe file operations.
-- `sparkyctrl edit  <host> <remote> --old X --new Y [--all]` — surgical exact-string replacement (refuses on no-match or non-unique match; atomic write).
+- `sparkyctrl edit  <host> <remote> --old X --new Y [--all]`
+  — surgical exact-string replacement; refuses on no-match or ambiguous match (atomic write).
+  On failure returns a diagnostic showing what was searched for and the file head, so
+  mismatches (CRLF vs LF, missing whitespace) are immediately visible without re-reading the file.
+  Multiline or binaryish strings use `--old-file PATH` / `--new-file PATH` in place of `--old`/`--new`.
 - `sparkyctrl info  <host>` — worker info.
+- `sparkyctrl --version` — print the version.
 
 `<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
 verb for raw output.
@@ -145,5 +150,4 @@ Design details live in `docs/superpowers/specs/`.
 
 ## Status
 
-v0.1.0 — public. Built, tested, and running on exactly one person's trusted LAN. Use at your own
-considerable risk.
+v0.1.4 — public. Built, tested, and running on exactly one person's trusted LAN.
