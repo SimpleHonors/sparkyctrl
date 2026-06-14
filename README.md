@@ -134,7 +134,7 @@ CLI required. It's a local stdio server, not a network service. It reuses your e
 
 **Tools exposed:** `exec`, `shell`, `read`, `write`, `edit`, `ls`, `info` — each takes a `host`
 parameter plus verb-specific arguments. Token auth passes through automatically from the
-environment. See the [[agent-onboarding-tools-and-mcps]] page for wiring examples.
+environment.
 
 ## The audit log keeps receipts, not guarantees
 
