@@ -24,6 +24,7 @@ WORKER (run on a target machine):
 CLIENT (run from the agent side):
   sparkyctrl exec  <host> -- <argv...>     run a command (no shell, mangle-proof)
   sparkyctrl shell <host> <script>         run a script through a real shell
+                                           (or pipe stdin: shell <host> < script)
   sparkyctrl ls    <host> <path>           list a directory
   sparkyctrl read  <host> <remote>         print a remote file to stdout
   sparkyctrl write <host> <remote>         write stdin to a remote file
@@ -196,14 +197,36 @@ func runExec(args []string, jsonOut bool) int {
 }
 
 func runShell(args []string, jsonOut bool) int {
-	if len(args) < 2 {
-		return fail("usage: shell <host> <script>")
+	if len(args) < 1 {
+		return fail("usage: shell <host> <script>  (or pipe stdin)")
+	}
+	var script string
+	if len(args) >= 2 {
+		script = strings.Join(args[1:], " ")
+	} else {
+		// Read script from stdin. Refuse to block on a terminal — a hung
+		// sparkyctrl shell <host> with no stdin looks like a bug.
+		fi, err := os.Stdin.Stat()
+		if err != nil {
+			return fail(err.Error())
+		}
+		if fi.Mode()&os.ModeCharDevice != 0 {
+			return fail("shell requires <script> or piped stdin (stdin is a terminal)")
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fail(err.Error())
+		}
+		script = strings.TrimSpace(string(data))
+		if script == "" {
+			return fail("shell requires <script> or piped stdin")
+		}
 	}
 	c, err := mkClient(args[0])
 	if err != nil {
 		return fail(err.Error())
 	}
-	resp, err := c.Shell(protocol.ShellRequest{Script: strings.Join(args[1:], " ")})
+	resp, err := c.Shell(protocol.ShellRequest{Script: script})
 	if err != nil {
 		return fail(err.Error())
 	}
