@@ -23,33 +23,20 @@ It's a sharp tool built for a specific operator on a specific network. `exec` an
 edit, ls) can be confined to a directory via an opt-in fence. Authentication is enforced via a 
 shared token generated at install time, which can be disabled if your network is your boundary.
 
-## Should you use this?
+## Security reality
 
-If you're on a trusted LAN and need AI agents to manage remote machines reliably—walk the checklist:
-
-- Is the target on a **private, trusted LAN** with zero untrusted devices? → No → **close the tab.**
-- Is it **never, under any circumstances, reachable from the internet**? → No → **close the tab.**
-- Are you the **sole operator**, and do you trust **every agent** you point at it? → No → **close the tab.**
-- Do you understand that the path "fence" is a **convenience, not a security boundary**, and that `exec` walks straight past it? → No → **close the tab.**
-
-Still here? Good. You're the operator this was built for.
+> This is root-level RCE on a trusted LAN.
+>
+> - Shared token by default; generated at install and required unless you pass `--no-auth` / `-NoAuth`.
+> - No users, no roles, no TLS.
+> - `exec` and `shell` run as root and ignore the fence; the fence only constrains file verbs.
+> - If the port is reachable from the internet, you have published a root shell.
 
 ## Why this exists anyway
 
-Every layer — local shell, SSH, the remote shell — re-parses a command. One stray backtick or unquoted 
-`$(...)` can turn "list the logs" into something that halts the machine. sparkyctrl removes the 
-shells from the default path so that class of bug physically cannot happen. 
-
-## Security model
-
-Read this part twice.
-
-- **Shared token by default.** The installer generates a random token, stores it on the worker, and prints it once. Clients set `SPARKYCTRL_TOKEN` to connect. Use `--no-auth` / `-NoAuth` only for isolated lab setups.
-- **No users, no roles, no TLS.** The token keeps honest agents honest on a trusted LAN. It is a speed bump, not a replacement for network isolation.
-- **`exec`/`shell` are unfenced.** They run as root with the full capability set. The fence governs file verbs only. Real containment is OS-level: run the worker in a container.
-- **Not for the internet. Ever.** 
-
----
+Every layer — local shell, SSH, the remote shell — re-parses a command. One stray backtick or unquoted
+`$(...)` can turn "list the logs" into something that halts the machine. sparkyctrl removes the
+shells from the default path so that class of bug cannot happen.
 
 ## Install
 
