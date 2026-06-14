@@ -36,7 +36,9 @@ CLIENT (run from the agent side):
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
-Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (shared token).`
+Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (shared token).
+
+  sparkyctrl --version                 print version`
 
 // splitExec splits "<host> -- <argv...>" into host and argv.
 func splitExec(args []string) (string, []string, error) {
@@ -124,6 +126,9 @@ func Run(args []string) int {
 		return runServe(rest)
 	case "-h", "--help", "help":
 		fmt.Println(usage)
+		return 0
+	case "--version", "-v", "version":
+		fmt.Println(protocol.Version)
 		return 0
 	}
 

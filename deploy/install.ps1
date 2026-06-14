@@ -108,7 +108,20 @@ if ($Binary) {
         $url = "https://github.com/$Repo/releases/download/$Version/sparkyctrl-windows-amd64.exe"
     }
     Info "downloading $url"
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+    # Bypass any intermediate caches (GitHub CDN, transparent proxies) so a
+    # re-run always fetches the current release, not a stale one.
+    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing `
+        -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"}
+
+    # Verify the binary actually works and report its version so the operator
+    # can confirm the upgrade landed without a separate info call.
+    try {
+        $ver = & $dest @("--version") 2>$null
+        Info "downloaded sparkyctrl version: $ver"
+    } catch {
+        Write-Error "downloaded binary does not appear to be executable: $_"
+        exit 1
+    }
 }
 
 # 2. Make sure the fence and audit-log locations exist.

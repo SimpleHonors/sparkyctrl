@@ -110,12 +110,9 @@ if [ -z "$FENCE" ] && [ "$NO_FENCE" -ne 1 ]; then
   fi
 fi
 
-# Resolve the binary. Reuse an already-installed one at its absolute path, but NEVER
-# auto-pick from the current directory (a planted ./sparkyctrl would be installed as root).
-# For a local build, pass --binary explicitly; otherwise download the release.
-if [ -z "$BINARY" ] && [ -x /usr/local/bin/sparkyctrl ]; then
-  BINARY="/usr/local/bin/sparkyctrl"
-fi
+# Resolve the binary. Pass --binary to use a local file; otherwise download the
+# release. We deliberately never auto-pick an already-installed binary — that
+# silently reuses the old version, defeating upgrades. Always fetch fresh.
 if [ -z "$BINARY" ]; then
   case "$(uname -m)" in
     x86_64|amd64)  ARCH=amd64 ;;
@@ -130,9 +127,16 @@ if [ -z "$BINARY" ]; then
   command -v curl >/dev/null 2>&1 || die "curl is required to download the release binary"
   TMP="$(mktemp)"
   echo "==> downloading ${URL}"
-  curl -fsSL "$URL" -o "$TMP" || die "download failed: ${URL}"
+  # Bypass intermediate caches so re-runs always fetch the current release.
+  curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "$URL" -o "$TMP" || die "download failed: ${URL}"
   chmod +x "$TMP"
   BINARY="$TMP"
+  # Verify the binary is executable and print its version.
+  if version=$("$BINARY" --version 2>/dev/null); then
+    echo "==> downloaded sparkyctrl version: ${version}"
+  else
+    die "downloaded binary does not appear to be executable"
+  fi
 fi
 [ -n "$BINARY" ] && [ -x "$BINARY" ] || die "no binary found — build with deploy/build.sh, or pass --binary <path>"
 
