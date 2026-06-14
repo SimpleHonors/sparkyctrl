@@ -23,8 +23,9 @@ WORKER (run on a target machine):
 
 CLIENT (run from the agent side):
   sparkyctrl exec  <host> -- <argv...>     run a command (no shell, mangle-proof)
-  sparkyctrl shell <host> <script>         run a script through a real shell
+   sparkyctrl shell <host> <script>         run a script through a real shell
                                            (or pipe stdin: shell <host> < script)
+                                           --shell sh|powershell (default: platform)
   sparkyctrl ls    <host> <path>           list a directory
   sparkyctrl read  <host> <remote>         print a remote file to stdout
   sparkyctrl write <host> <remote>         write stdin to a remote file
@@ -198,14 +199,23 @@ func runExec(args []string, jsonOut bool) int {
 
 func runShell(args []string, jsonOut bool) int {
 	if len(args) < 1 {
-		return fail("usage: shell <host> <script>  (or pipe stdin)")
+		return fail("usage: shell <host> [--shell sh|powershell] <script>  (or pipe stdin)")
 	}
+	host := args[0]
+
+	// Parse flags from the remaining args.
+	fs := flag.NewFlagSet("shell", flag.ContinueOnError)
+	shell := fs.String("shell", "", "shell to use: sh (default on Unix), powershell")
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	rest := fs.Args()
+
 	var script string
-	if len(args) >= 2 {
-		script = strings.Join(args[1:], " ")
+	if len(rest) >= 1 {
+		script = strings.Join(rest, " ")
 	} else {
-		// Read script from stdin. Refuse to block on a terminal — a hung
-		// sparkyctrl shell <host> with no stdin looks like a bug.
+		// Read script from stdin. Refuse to block on a terminal.
 		fi, err := os.Stdin.Stat()
 		if err != nil {
 			return fail(err.Error())
@@ -222,11 +232,11 @@ func runShell(args []string, jsonOut bool) int {
 			return fail("shell: stdin was empty")
 		}
 	}
-	c, err := mkClient(args[0])
+	c, err := mkClient(host)
 	if err != nil {
 		return fail(err.Error())
 	}
-	resp, err := c.Shell(protocol.ShellRequest{Script: script})
+	resp, err := c.Shell(protocol.ShellRequest{Script: script, Shell: *shell})
 	if err != nil {
 		return fail(err.Error())
 	}
