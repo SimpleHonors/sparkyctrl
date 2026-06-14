@@ -61,10 +61,17 @@ if ($Uninstall) {
 # is redirected (e.g. irm | iex), where we cannot prompt.
 if (-not $Fence -and -not $NoFence) {
     if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
-        $ans = Read-Host "Fence file operations to a directory? Enter a path, or blank for FULL filesystem access"
-        if ($ans) { $Fence = $ans }
+        while ($true) {
+            Write-Host "Confine the worker's file operations to a directory (the `"fence`")?"
+            Write-Host "  - enter a path to confine to it (recommended)"
+            Write-Host "  - type 'none' for FULL filesystem access (dangerous)"
+            $ans = Read-Host "fence path [or none]"
+            if ($ans -eq 'none') { $NoFence = $true; break }
+            elseif ($ans)        { $Fence = $ans;  break }
+            else { Write-Host "Please enter a path or 'none'." }
+        }
     } else {
-        Write-Error "no fence specified: pass -Fence <dir> to confine file operations, or -NoFence for full access"
+        Write-Error "no terminal to prompt: pass -Fence <dir> to confine file operations, or -NoFence for full access"
         exit 1
     }
 }

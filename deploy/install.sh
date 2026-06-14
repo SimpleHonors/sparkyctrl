@@ -1,100 +1,131 @@
 #!/usr/bin/env bash
 #
-# sparkyctrl installer — choose the worker's privilege mode at install time.
+# sparkyctrl installer (Linux). Installs /usr/local/bin/sparkyctrl + a systemd unit.
 #
-#   --mode admin     (default) runs the worker as root; exec/shell are unfenced.
-#                    For trusted sysadmin use on a trusted LAN ("sharp tool").
-#   --mode hardened  runs the worker as an unprivileged system user with zero Linux
-#                    capabilities and a read-only filesystem except the fence + audit
-#                    log. File-serving only — exec/shell no longer run as root.
+# Run it and it ASKS where to fence file operations — you don't pre-bake a path.
+#   curl -fsSL <raw>/deploy/install.sh | sudo bash -s -- --start
 #
-# Installs the binary to /usr/local/bin/sparkyctrl and writes the systemd unit to
-# /etc/systemd/system/sparkyctrl.service. Re-run any time to switch modes.
+# Flags (parallel to the Windows install.ps1 where the platform allows):
+#   --fence DIR     confine file operations to DIR
+#   --no-fence      full filesystem access (no fence)
+#   --mode MODE     admin (default; root, exec/shell unfenced) | hardened (non-root, caps
+#                   dropped, read-only FS except fence+audit; Linux-only)
+#   --container     hardened mode inside an unprivileged LXC (drop mount-namespace isolation)
+#   --addr H:P      listen address (default 0.0.0.0:7766)
+#   --audit FILE    audit log path
+#   --token T       optional shared token
+#   --binary PATH   install this local binary instead of downloading the release
+#   --version V     release version to download (default: latest)
+#   --start         start the worker now
+#   --no-enable     do not enable at boot
+#   --uninstall     stop + remove the service (leaves the binary and audit log)
 #
-# Usage:
-#   sudo ./deploy/install.sh --mode admin   (--fence DIR | --no-fence) [--addr H:P] [--audit FILE] [--token T] [--start]
-#   sudo ./deploy/install.sh --mode hardened --fence DIR [--addr H:P] [--audit FILE] [--token T] [--container] [--start]
-#
-# Admin mode requires an explicit fence choice: --fence DIR confines file ops to DIR;
-# --no-fence grants FULL filesystem access. Run interactively without either and it prompts.
-#
-# --container omits the mount-namespace filesystem isolation (ProtectSystem etc.)
-# that an unprivileged LXC cannot set up; keeps the non-root / no-caps hardening.
+# If you pass neither --fence nor --no-fence, the installer prompts (even via curl | bash).
 #
 set -euo pipefail
 
 MODE=admin
 ADDR="0.0.0.0:7766"
 FENCE=""
+NO_FENCE=0
 AUDIT="/var/log/sparkyctrl-audit.log"
 TOKEN=""
 BINARY=""
+VERSION="${SPARKYCTRL_VERSION:-latest}"
+REPO="${SPARKYCTRL_REPO:-SimpleHonors/sparkyctrl}"
 SVC_USER="sparkyctrl"
 UNIT="/etc/systemd/system/sparkyctrl.service"
 DO_ENABLE=1
 DO_START=0
 CONTAINER=0
-NO_FENCE=0
+UNINSTALL=0
 WAS_ACTIVE=0
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
-
 die() { echo "install.sh: $*" >&2; exit 1; }
+usage() { awk 'NR>2 && /^#/ {sub(/^# ?/,""); print; next} NR>2 {exit}' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --mode)     MODE="${2:-}"; shift 2 ;;
-    --addr)     ADDR="${2:-}"; shift 2 ;;
-    --fence)    FENCE="${2:-}"; shift 2 ;;
-    --audit)    AUDIT="${2:-}"; shift 2 ;;
-    --token)    TOKEN="${2:-}"; shift 2 ;;
-    --binary)   BINARY="${2:-}"; shift 2 ;;
-    --user)     SVC_USER="${2:-}"; shift 2 ;;
-    --start)    DO_START=1; shift ;;
+    --mode)      MODE="${2:-}"; shift 2 ;;
+    --addr)      ADDR="${2:-}"; shift 2 ;;
+    --fence)     FENCE="${2:-}"; shift 2 ;;
+    --no-fence)  NO_FENCE=1; shift ;;
+    --audit)     AUDIT="${2:-}"; shift 2 ;;
+    --token)     TOKEN="${2:-}"; shift 2 ;;
+    --binary)    BINARY="${2:-}"; shift 2 ;;
+    --version)   VERSION="${2:-}"; shift 2 ;;
+    --repo)      REPO="${2:-}"; shift 2 ;;
+    --user)      SVC_USER="${2:-}"; shift 2 ;;
+    --start)     DO_START=1; shift ;;
     --no-enable) DO_ENABLE=0; shift ;;
     --container) CONTAINER=1; shift ;;
-    --no-fence) NO_FENCE=1; shift ;;
-    -h|--help)  usage; exit 0 ;;
+    --uninstall) UNINSTALL=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
 
-case "$MODE" in admin|hardened) ;; *) die "--mode must be 'admin' or 'hardened'" ;; esac
-[ "$MODE" = hardened ] && [ -z "$FENCE" ] && die "hardened mode requires --fence <dir> (it is the only writable area)"
 [ "$(id -u)" -eq 0 ] || die "must run as root (writes /usr/local/bin and /etc/systemd/system)"
 
-# Admin mode: the fence decision must be explicit — no fence means FULL filesystem
-# access, so never default to that silently. Prompt when interactive; require an
-# explicit --fence/--no-fence when piped (e.g. curl | bash), where we can't prompt.
-if [ "$MODE" = admin ] && [ -z "$FENCE" ] && [ "$NO_FENCE" -ne 1 ]; then
-  if [ -t 0 ]; then
-    printf 'Fence file operations to a directory? Enter a path, or leave blank for FULL filesystem access: '
-    read -r FENCE
+if [ "$UNINSTALL" -eq 1 ]; then
+  systemctl stop sparkyctrl 2>/dev/null || true
+  systemctl disable sparkyctrl 2>/dev/null || true
+  rm -f "$UNIT"
+  systemctl daemon-reload 2>/dev/null || true
+  echo "==> removed the sparkyctrl service (left /usr/local/bin/sparkyctrl and the audit log in place)"
+  exit 0
+fi
+
+case "$MODE" in admin|hardened) ;; *) die "--mode must be 'admin' or 'hardened'" ;; esac
+
+# The fence is a deliberate choice, never a silent default. Confine file operations to a
+# directory, or grant full filesystem access. Hardened mode always needs a fence (it is the
+# only writable area). Otherwise: use the flags if given, else ASK — reading the terminal
+# directly so this works even when piped (curl | bash). Only error when there is no terminal.
+if [ -z "$FENCE" ] && [ "$NO_FENCE" -ne 1 ]; then
+  if [ "$MODE" = hardened ]; then
+    NEED="hardened mode requires a fence (the only writable area)"
   else
-    die "no fence specified: pass --fence <dir> to confine file operations, or --no-fence for full access"
+    NEED=""
+  fi
+  if { : > /dev/tty; } 2>/dev/null; then
+    while :; do
+      {
+        echo "Confine the worker's file operations to a directory (the \"fence\")?"
+        echo "  - enter an ABSOLUTE path to confine to it (recommended)"
+        [ -z "$NEED" ] && echo "  - type 'none' for FULL filesystem access (dangerous)"
+        printf 'fence path%s: ' "$([ -z "$NEED" ] && echo ' [or none]')"
+      } > /dev/tty
+      read -r ans < /dev/tty || die "no fence chosen"
+      case "$ans" in
+        none|NONE) [ -z "$NEED" ] && { NO_FENCE=1; break; } || echo "hardened mode needs a path." > /dev/tty ;;
+        /*) FENCE="$ans"; break ;;
+        "") echo "Please enter an absolute path${NEED:+ }." > /dev/tty ;;
+        *)  echo "Enter an ABSOLUTE path (starting with /)${NEED:+, no 'none' in hardened mode}." > /dev/tty ;;
+      esac
+    done
+  else
+    [ -n "$NEED" ] && die "$NEED: pass --fence <dir>"
+    die "no terminal to prompt: pass --fence <dir> to confine file operations, or --no-fence for full access"
   fi
 fi
 
-# Reuse an already-installed binary at its absolute path if present, but NEVER auto-pick
-# a binary from the current directory — a planted ./sparkyctrl would otherwise be installed
-# and run as root. For a local build, pass --binary <path> explicitly.
+# Resolve the binary. Reuse an already-installed one at its absolute path, but NEVER
+# auto-pick from the current directory (a planted ./sparkyctrl would be installed as root).
+# For a local build, pass --binary explicitly; otherwise download the release.
 if [ -z "$BINARY" ] && [ -x /usr/local/bin/sparkyctrl ]; then
   BINARY="/usr/local/bin/sparkyctrl"
 fi
-# If no local binary was found, download the published release binary.
-# Public repo → no auth needed. Override repo/version via SPARKYCTRL_REPO / SPARKYCTRL_VERSION.
 if [ -z "$BINARY" ]; then
-  REPO="${SPARKYCTRL_REPO:-SimpleHonors/sparkyctrl}"
-  VER="${SPARKYCTRL_VERSION:-latest}"
   case "$(uname -m)" in
     x86_64|amd64)  ARCH=amd64 ;;
     aarch64|arm64) ARCH=arm64 ;;
     *) die "unsupported architecture: $(uname -m) — build locally and pass --binary <path>" ;;
   esac
-  if [ "$VER" = latest ]; then
+  if [ "$VERSION" = latest ]; then
     URL="https://github.com/${REPO}/releases/latest/download/sparkyctrl-linux-${ARCH}"
   else
-    URL="https://github.com/${REPO}/releases/download/${VER}/sparkyctrl-linux-${ARCH}"
+    URL="https://github.com/${REPO}/releases/download/${VERSION}/sparkyctrl-linux-${ARCH}"
   fi
   command -v curl >/dev/null 2>&1 || die "curl is required to download the release binary"
   TMP="$(mktemp)"
@@ -110,8 +141,7 @@ if [ "$(readlink -f "$BINARY")" = "$(readlink -f "$DEST" 2>/dev/null || echo "$D
   echo "==> binary already in place: $DEST (skipping copy)"
 else
   # Stop a running worker before overwriting its binary: Linux refuses to overwrite a
-  # running executable (ETXTBSY), Windows locks it outright. Remember it was running so
-  # the update leaves it running.
+  # running executable (ETXTBSY), Windows locks it. Remember it was running so we restart it.
   if systemctl is-active --quiet sparkyctrl 2>/dev/null; then
     WAS_ACTIVE=1
     systemctl stop sparkyctrl 2>/dev/null || true
@@ -121,17 +151,15 @@ else
   echo "==> installed binary: $BINARY -> $DEST"
 fi
 
-# Assemble the serve arguments shared by both modes.
+# Assemble the serve arguments.
 SERVE_ARGS="--addr ${ADDR} --audit ${AUDIT}"
 [ -n "$FENCE" ] && SERVE_ARGS="${SERVE_ARGS} --fence ${FENCE}"
 [ -n "$TOKEN" ] && SERVE_ARGS="${SERVE_ARGS} --token ${TOKEN}"
 
-# Ensure the fence dir and audit log exist.
 [ -n "$FENCE" ] && mkdir -p "$FENCE"
 touch "$AUDIT"
 
 if [ "$MODE" = admin ]; then
-  # Admin mode: root, full caps, exec/shell unfenced. Audit log owned by root.
   chown root:root "$AUDIT" 2>/dev/null || true
   cat > "$UNIT" <<EOF
 [Unit]
@@ -148,20 +176,14 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 else
-  # Hardened mode: dedicated unprivileged user, zero caps, read-only FS except
-  # the fence + audit log. Pre-create the user and hand it ownership of the
-  # writable areas so a non-root worker can actually serve and audit.
   if ! id -u "$SVC_USER" >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin "$SVC_USER"
     echo "==> created system user: $SVC_USER"
   fi
   chown -R "$SVC_USER":"$SVC_USER" "$FENCE" "$AUDIT"
 
-  # The filesystem-isolation directives below use mount namespaces, which an
-  # unprivileged LXC container cannot set up — the worker then dies with
-  # 226/NAMESPACE. --container omits them while keeping the user / capability /
-  # seccomp hardening. On a real host, VM, or privileged container, leave
-  # --container off for the full read-only-filesystem posture.
+  # Mount-namespace isolation can't be set up in an unprivileged LXC (the worker dies with
+  # 226/NAMESPACE). --container omits it while keeping the user/capability/seccomp hardening.
   FS_ISOLATION=""
   if [ "$CONTAINER" -eq 0 ]; then
     FS_ISOLATION="# Whole filesystem read-only except the fence + audit log.
@@ -209,7 +231,8 @@ WantedBy=multi-user.target
 EOF
 fi
 
-echo "==> wrote unit: $UNIT (mode=$MODE)"
+if [ -n "$FENCE" ]; then FENCE_DESC="fence=$FENCE"; else FENCE_DESC="no fence (FULL access)"; fi
+echo "==> wrote unit: $UNIT (mode=$MODE, $FENCE_DESC)"
 systemctl daemon-reload
 if [ "$DO_ENABLE" -eq 1 ]; then systemctl enable sparkyctrl >/dev/null 2>&1 && echo "==> enabled at boot"; fi
 if [ "$DO_START" -eq 1 ] || [ "$WAS_ACTIVE" -eq 1 ]; then systemctl restart sparkyctrl && echo "==> started: $(systemctl is-active sparkyctrl)"; fi

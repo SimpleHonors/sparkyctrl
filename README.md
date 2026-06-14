@@ -70,42 +70,52 @@ Read this part twice.
 
 ## Install (you were warned)
 
+The installer **asks where to fence the worker's file operations** — it does not bake in a
+path. Answer the prompt with a directory to confine to, or `none` for full filesystem access;
+or pass `--fence DIR` / `--no-fence` up front for an unattended install.
+
+**Linux** — installs as **root** and starts listening:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.sh \
-  | sudo bash -s -- --mode admin --fence /srv/share --start
+  | sudo bash -s -- --start
 ```
 
-That installs the worker as **root** (admin mode) and starts it listening. Admin mode makes
-you choose the fence explicitly — `--fence DIR` to confine file operations, or `--no-fence`
-for full filesystem access (run the installer in a terminal without either and it asks). Want to be slightly
-less reckless? Swap `--mode admin` for **`--mode hardened`** — a dedicated unprivileged user,
-zero capabilities, a read-only filesystem except the fence and audit log, and `exec`/`shell`
-that no longer run as root. Inside an unprivileged LXC, add `--container` (the mount-namespace
-isolation cannot be set up there).
-
-The installer auto-downloads the right prebuilt binary for your CPU from the latest release.
-Re-run any time to switch modes. `./deploy/install.sh --help` lists every flag (`--addr`,
-`--audit`, `--token`, `--user`, `--no-enable`). Build from source with `./deploy/build.sh`.
-
-### Windows (yes, really — but less battle-tested)
-
-The bash installer is Linux-only; on Windows use the PowerShell installer. In an **elevated**
-PowerShell:
+**Windows** — in an **elevated** PowerShell; runs as **SYSTEM**, opens a Private-profile
+firewall rule (never Public/internet), and registers an auto-restarting scheduled task:
 
 ```powershell
 $ProgressPreference = 'SilentlyContinue'   # else the download progress bar can look frozen
 irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1
-.\install.ps1 -Fence C:\share -Start
+.\install.ps1 -Start
 ```
 
-It installs the worker under `Program Files`, opens a **Private-profile** firewall rule for the
-port (never Public/internet), and registers a Scheduled Task that runs it as **SYSTEM** at
-startup with auto-restart — the rough equivalent of Linux admin mode. Remove everything with
-`.\install.ps1 -Uninstall`; `Get-Help .\install.ps1 -Detailed` lists the flags (`-Addr`,
-`-Audit`, `-Token`, `-Version`, `-Binary`, ...).
+Both auto-download the right prebuilt binary from the latest release, are safe to **re-run to
+update** (they stop the worker, swap the binary, restart it), and **uninstall** the same way
+(`--uninstall` / `-Uninstall`).
 
-Windows is less battle-tested than Linux here: if something is going to be weird, it'll be weird
-on Windows first.
+Flags are parallel across platforms (Linux `--lower-case`, Windows `-PascalCase`, same meaning):
+
+| | Linux | Windows |
+|---|---|---|
+| confine file ops | `--fence DIR` | `-Fence DIR` |
+| full access (no fence) | `--no-fence` | `-NoFence` |
+| listen address | `--addr H:P` | `-Addr H:P` |
+| audit log path | `--audit FILE` | `-Audit FILE` |
+| shared token | `--token T` | `-Token T` |
+| release version | `--version V` | `-Version V` |
+| use a local binary | `--binary PATH` | `-Binary PATH` |
+| start now | `--start` | `-Start` |
+| uninstall | `--uninstall` | `-Uninstall` |
+
+**Linux-only** (these need systemd): `--mode hardened` runs the worker as a dedicated
+unprivileged user with zero capabilities and a read-only filesystem except the fence + audit
+log (`exec`/`shell` no longer run as root); add `--container` for that mode inside an
+unprivileged LXC. On Windows the worker always runs as SYSTEM (admin-equivalent). Build from
+source with `./deploy/build.sh`.
+
+> Windows is less battle-tested than Linux: if something is going to be weird, it'll be weird
+> on Windows first.
 
 ## Using it
 
