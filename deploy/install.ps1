@@ -98,14 +98,16 @@ if ($existing) {
         $currentPid = $parent.ParentProcessId
     }
     if ($detach) {
-        # Re-spawn ourselves as a background job that survives the sparkyctrl
-        # task termination. Start-Process is unreliable from a SYSTEM session.
-        $scriptBlock = {
-            $ProgressPreference = 'SilentlyContinue'
-            irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile $env:TEMP\install.ps1
-            & $env:TEMP\install.ps1 -NoFence -Start
-        }
-        Start-Job -ScriptBlock $scriptBlock | Out-Null
+        # Re-spawn ourselves as an independent OS-level process that survives
+        # the sparkyctrl task termination. Start-Process/Start-Job both die
+        # with the parent; System.Diagnostics.Process.Start creates a truly
+        # independent process.
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName = "powershell.exe"
+        $psi.Arguments = "-NoProfile -Command `"`$ProgressPreference='SilentlyContinue'; irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile `$env:TEMP\install.ps1; & `$env:TEMP\install.ps1 -NoFence -Start`""
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        [System.Diagnostics.Process]::Start($psi) | Out-Null
         Info "running under sparkyctrl -- install detached to background"
         Info "sparkyctrl will restart in a few seconds"
         exit 0

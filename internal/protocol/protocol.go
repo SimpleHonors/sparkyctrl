@@ -5,7 +5,7 @@ package protocol
 
 const (
 	// Version is the build/protocol version reported by /v1/info.
-	Version = "0.1.7"
+	Version = "0.1.8"
 	// DefaultPort is the worker's default listen port.
 	DefaultPort = 7766
 	// TokenHeader carries the optional shared secret.
