@@ -1,0 +1,5 @@
+# Copy to hosts.toml (gitignored) and fill in real LAN addresses.
+# Maps a friendly name to a worker's address, so you can type `sparkyctrl exec nas2 -- ...`
+
+nas2 = "HOST:7766"
+# example-lxc = "HOST:7766"

@@ -1,0 +1,21 @@
+# Real host address book (contains LAN addresses) — never commit
+hosts.toml
+.sparkyctrl/
+
+# Build artifacts
+/sparkyctrl
+/dist/
+*.exe
+*.test
+*.out
+
+# Env / secrets
+.env
+*.local
+
+# Internal dev-process notes (infra-specific: sandbox hosts, /root paths) — keep out of the repo
+docs/superpowers/plans/
+docs/superpowers/verification/
+
+# OS / editor cruft
+.DS_Store

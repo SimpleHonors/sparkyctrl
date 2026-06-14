@@ -1,0 +1,7 @@
+# Keep the Docker build context lean (the image builds from source).
+.git/
+dist/
+*.exe
+docs/
+*.md
+hosts.toml
