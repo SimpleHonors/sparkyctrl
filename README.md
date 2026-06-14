@@ -2,14 +2,14 @@
 
 **A single-binary remote command-and-file daemon for AI agents on a trusted LAN.**
 
-> ## ☢️ STOP. READ THIS BEFORE YOU SCROLL.
+> ## 💡 What you need to know
 >
-> This is a **remote-code-execution daemon you install on purpose.** It runs commands as
-> **root**, over the network, with **token authentication by default.** If that sentence did not make
-> you wince, you are precisely the person who should not run this.
+> This is a remote-code-execution daemon for your **trusted LAN.** It runs commands as root with
+> a **shared token for auth.** If you expose it to the internet, you've published a root shell.
+> Read the security section before you install.
 >
-> There is a **~99% chance the correct move is to close this tab.** We mean it. Keep reading
-> only if you are the specific, paranoid, fully-consenting operator this was built for.
+> It solves a real problem — AI agents are bad at shells — and it does it with a sharp tool
+> rather than a padded room. Know what you're installing.
 
 ## What this actually is
 
@@ -18,21 +18,22 @@ the middle to mangle them.** Commands go out as a structured argument array stra
 `exec` call, so the quoting and escaping disasters that happen when an agent drives a box over
 SSH simply cannot.
 
-It solves a real problem. It solves it by being a loaded gun with the safety welded off. To put
-it plainly: **it is a backdoor, and we built it that way on purpose.** `exec` and `shell` run as
-**root**, unfenced, by design. That is not an oversight we intend to fix. That is the product.
+It's a sharp tool built for a specific operator on a specific network. `exec` and `shell` run as
+**root**, unfenced, by design — that is the product. The file verbs (read, write, edit, ls) can
+be confined to a directory via an opt-in fence. Authentication is a shared token generated at
+install time and required by default.
 
-## Should you use this? (Almost certainly not.)
+## Should you use this?
 
-Walk the checklist. Any **No** means *close the tab.*
+If you're on a trusted LAN and need AI agents to manage remote machines without shell-mangling
+disasters — maybe. Walk the checklist:
 
-- Is the target on a **private, trusted LAN** with zero untrusted devices on it? → No → **close the tab.**
+- Is the target on a **private, trusted LAN** with zero untrusted devices? → No → **close the tab.**
 - Is it **never, under any circumstances, reachable from the internet**? → No → **close the tab.**
-- Are you the **sole operator**, and do you trust **every agent** you will ever point at it? → No → **close the tab.**
-- Would you hand a **stranger a root shell** on this machine? Because that is the threat model the instant any assumption above is wrong. → No → **close the tab.**
+- Are you the **sole operator**, and do you trust **the agents** you point at it? → No → **close the tab.**
 - Do you understand that the path "fence" is a **convenience, not a security boundary**, and that `exec` walks straight past it? → No → **close the tab.**
 
-Still here? Suspicious. But fine.
+If you answered yes to all four: you're the person this was built for.
 
 ## Why this exists anyway
 
@@ -44,32 +45,16 @@ the shells from the default path so that class of bug cannot happen. That is the
 sharp tool for a trusted operator on a trusted network — and **nothing about it pretends to be
 safe.**
 
-## What it is **not**
+## Security model
 
-Read this part twice.
-
-- **Not a general security product.** The worker uses a single shared token by default and
-  supports `--no-auth` for lab setups. There are no users, no roles, no meaningful rate
-  limiting, and no TLS in this release. The token is a speed bump, not a wall.
-- **Not contained.** `exec`/`shell` run as root with the full capability set. They can read
-  `/etc/shadow`, rewrite `/etc/sudoers`, and yes, halt the machine. The fence governs the *file*
-  verbs only, and only if you opt in.
-- **Not a security boundary.** The fence is symlink-safe and handy for keeping file ops tidy. It
-  is **not** what stands between an attacker and your host. The real wall is **OS-level
-  isolation** — run the worker in a container with only the shares you mean to expose
-  bind-mounted in.
-- **Not for the internet. Ever.** If this port is reachable from outside your LAN, you have not
-  deployed a tool. You have published a root shell.
+- **Shared token by default.** The installer generates a random token, stores it on the worker, and prints it once. Clients set `SPARKYCTRL_TOKEN` to connect. Use `--no-auth` / `-NoAuth` for lab setups where the network itself is the boundary.
+- **No users, no roles, no TLS.** The token keeps honest agents honest on a trusted LAN. It is not a replacement for network isolation.
+- **`exec`/`shell` are unfenced.** They run as root with the full capability set. The fence governs file verbs only. Real containment is OS-level: run the worker in a container.
+- **Not for the internet. Ever.** If this port is reachable from outside your LAN, you have not deployed a tool. You have published a root shell.
 
 ---
 
-> ## ☢️ LAST CHANCE.
->
-> The command below installs a **root-level remote shell** and sets it **listening on your
-> network.** This is the dangerous thing. There is no undo — only `systemctl stop` and regret.
-> By running it you accept every inevitability described above.
-
-## Install (you were warned)
+## Install
 
 The installer **asks where to fence the worker's file operations** — it does not bake in a
 path. Answer the prompt with a directory to confine to, or `none` for full filesystem access;
@@ -127,7 +112,8 @@ From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
 
 - `sparkyctrl exec  <host> -- <argv...>` — run a command, mangle-proof; stdout/stderr/exit code back.
 - `sparkyctrl shell <host> <script>` — explicit, logged shell path for pipes/globs/etc.
-  (`cmd` on Windows, `/bin/sh` on Unix; trailing backslashes are preserved — quote paths with spaces).
+  (`cmd` on Windows, `/bin/sh` on Unix; use `--shell powershell` for PS scripts).
+  Pipe scripts via stdin: `echo script | sparkyctrl shell host`.
 - `sparkyctrl read|write|ls|push|pull <host> ...` — binary-safe file operations.
 - `sparkyctrl edit  <host> <remote> --old X --new Y [--all]`
   — surgical exact-string replacement; refuses on no-match or ambiguous match (atomic write).
@@ -149,9 +135,8 @@ the log through the same channel it audits. It is a flight recorder, not a seatb
 
 ## Philosophy
 
-A sharp tool for a trusted operator: *if you want to do something stupid, we will not stop you.*
-No guardrails beyond an opt-in fence; the audit log keeps receipts rather than preventing.
-Design details live in `docs/superpowers/specs/`.
+A sharp tool for a trusted operator. No guardrails beyond an opt-in fence; the audit log keeps
+receipts rather than preventing. Design details live in `docs/superpowers/specs/`.
 
 ## Status
 
