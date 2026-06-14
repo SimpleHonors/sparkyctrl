@@ -146,8 +146,23 @@ if [ "$(readlink -f "$BINARY")" = "$(readlink -f "$DEST" 2>/dev/null || echo "$D
 else
   # Stop a running worker before overwriting its binary: Linux refuses to overwrite a
   # running executable (ETXTBSY), Windows locks it. Remember it was running so we restart it.
+  # If this script is itself running as a child of sparkyctrl (e.g. `sparkyctrl shell
+  # "curl ... | bash"`), stopping the service kills our parent and takes us with it
+  # mid-install. Detect that case and re-spawn ourselves detached before the stop.
   if systemctl is-active --quiet sparkyctrl 2>/dev/null; then
     WAS_ACTIVE=1
+    if [ -r "/proc/$PPID/cmdline" ] && tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null | grep -q 'sparkyctrl serve'; then
+      UPGRADE_SCRIPT="/tmp/sparkyctrl-upgrade-$$.sh"
+      curl -fsSL "https://raw.githubusercontent.com/${REPO}/master/deploy/install.sh" -o "$UPGRADE_SCRIPT" 2>/dev/null
+      if [ -s "$UPGRADE_SCRIPT" ]; then
+        chmod +x "$UPGRADE_SCRIPT"
+        nohup "$UPGRADE_SCRIPT" "$@" > /tmp/sparkyctrl-upgrade.log 2>&1 &
+        echo "==> running under sparkyctrl — install detached to background"
+        echo "==> sparkyctrl will restart in a few seconds (check /tmp/sparkyctrl-upgrade.log)"
+        exit 0
+      fi
+      # Fall through if download fails — best-effort inline upgrade.
+    fi
     systemctl stop sparkyctrl 2>/dev/null || true
     echo "==> stopped running worker to replace its binary"
   fi
