@@ -79,10 +79,33 @@ if (-not $Fence -and -not $NoFence) {
 # If the service is already installed, stop it so its locked binary releases before we
 # overwrite it — Windows won't replace a running .exe. Remember whether it was running so
 # the update leaves it running afterward.
+# If this script is itself running as a child of sparkyctrl (e.g. `sparkyctrl shell
+# "powershell ... install.ps1"`), stopping the task kills our parent and takes us with
+# it mid-install. Detect that case and re-spawn ourselves detached before the stop.
 $wasRunning = $false
 $existing = Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
     if ($existing.State -eq 'Running') { $wasRunning = $true }
+
+    # Walk up the process tree looking for a sparkyctrl ancestor.
+    $detach = $false
+    $currentPid = $pid
+    for ($up = 0; $up -lt 5; $up++) {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$currentPid" -ErrorAction SilentlyContinue
+        if (-not $parent -or $parent.ParentProcessId -eq 0) { break }
+        $pname = (Get-Process -Id $parent.ParentProcessId -ErrorAction SilentlyContinue).ProcessName
+        if ($pname -eq "sparkyctrl") { $detach = $true; break }
+        $currentPid = $parent.ParentProcessId
+    }
+    if ($detach) {
+        $upgradeScript = Join-Path $env:TEMP "sparkyctrl-upgrade-$(Get-Random).ps1"
+        Invoke-WebRequest -Uri "https://raw.githubusercontent.com/$Repo/master/deploy/install.ps1" -OutFile $upgradeScript -UseBasicParsing
+        Start-Process -FilePath powershell -ArgumentList "-NoProfile -File `"$upgradeScript`" -Start" -WindowStyle Hidden
+        Info "running under sparkyctrl — install detached to background"
+        Info "sparkyctrl will restart in a few seconds"
+        exit 0
+    }
+
     Stop-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
     Info "stopped existing '$ServiceName' to update its binary"
     for ($i = 0; $i -lt 20 -and (Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue).State -eq 'Running'; $i++) {
