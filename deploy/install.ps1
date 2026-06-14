@@ -69,6 +69,21 @@ if (-not $Fence -and -not $NoFence) {
     }
 }
 
+# If the service is already installed, stop it so its locked binary releases before we
+# overwrite it — Windows won't replace a running .exe. Remember whether it was running so
+# the update leaves it running afterward.
+$wasRunning = $false
+$existing = Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
+if ($existing) {
+    if ($existing.State -eq 'Running') { $wasRunning = $true }
+    Stop-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue
+    Info "stopped existing '$ServiceName' to update its binary"
+    for ($i = 0; $i -lt 20 -and (Get-ScheduledTask -TaskName $ServiceName -ErrorAction SilentlyContinue).State -eq 'Running'; $i++) {
+        Start-Sleep -Milliseconds 250
+    }
+    Start-Sleep -Milliseconds 500
+}
+
 # 1. Resolve the binary. An explicit -Binary uses a local file; otherwise download the
 #    release. We deliberately do NOT auto-pick a binary from the current directory: a
 #    planted .\sparkyctrl.exe would otherwise be installed and run as SYSTEM.
@@ -117,7 +132,7 @@ Register-ScheduledTask -TaskName $ServiceName -Action $action -Trigger $trigger 
     -Principal $principal -Settings $settings -Force | Out-Null
 Info "registered scheduled task '$ServiceName' (runs as SYSTEM at startup, auto-restarts)"
 
-if ($Start) {
+if ($Start -or $wasRunning) {
     Start-ScheduledTask -TaskName $ServiceName
     Start-Sleep -Seconds 1
     Info "started: $((Get-ScheduledTask -TaskName $ServiceName).State)"

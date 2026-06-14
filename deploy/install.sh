@@ -35,6 +35,7 @@ DO_ENABLE=1
 DO_START=0
 CONTAINER=0
 NO_FENCE=0
+WAS_ACTIVE=0
 
 usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -108,6 +109,14 @@ DEST="/usr/local/bin/sparkyctrl"
 if [ "$(readlink -f "$BINARY")" = "$(readlink -f "$DEST" 2>/dev/null || echo "$DEST")" ]; then
   echo "==> binary already in place: $DEST (skipping copy)"
 else
+  # Stop a running worker before overwriting its binary: Linux refuses to overwrite a
+  # running executable (ETXTBSY), Windows locks it outright. Remember it was running so
+  # the update leaves it running.
+  if systemctl is-active --quiet sparkyctrl 2>/dev/null; then
+    WAS_ACTIVE=1
+    systemctl stop sparkyctrl 2>/dev/null || true
+    echo "==> stopped running worker to replace its binary"
+  fi
   install -m 0755 "$BINARY" "$DEST"
   echo "==> installed binary: $BINARY -> $DEST"
 fi
@@ -203,5 +212,5 @@ fi
 echo "==> wrote unit: $UNIT (mode=$MODE)"
 systemctl daemon-reload
 if [ "$DO_ENABLE" -eq 1 ]; then systemctl enable sparkyctrl >/dev/null 2>&1 && echo "==> enabled at boot"; fi
-if [ "$DO_START" -eq 1 ]; then systemctl restart sparkyctrl && echo "==> started: $(systemctl is-active sparkyctrl)"; fi
+if [ "$DO_START" -eq 1 ] || [ "$WAS_ACTIVE" -eq 1 ]; then systemctl restart sparkyctrl && echo "==> started: $(systemctl is-active sparkyctrl)"; fi
 echo "==> done (mode=$MODE)."
