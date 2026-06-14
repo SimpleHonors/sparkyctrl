@@ -24,6 +24,10 @@
 #
 set -euo pipefail
 
+# Save original arguments before shift consumes them — needed for the detach
+# path that re-spawns the script with the same flags.
+ORIG_ARGS=("$@")
+
 MODE=admin
 ADDR="0.0.0.0:7766"
 FENCE=""
@@ -149,14 +153,26 @@ else
   # If this script is itself running as a child of sparkyctrl (e.g. `sparkyctrl shell
   # "curl ... | bash"`), stopping the service kills our parent and takes us with it
   # mid-install. Detect that case and re-spawn ourselves detached before the stop.
+  # Walk up to two levels: when sparkyctrl runs a shell, the process tree is
+  #   sparkyctrl serve → sh -c "..." → bash install.sh
+  # so $PPID may be the intermediate shell, not sparkyctrl itself.
   if systemctl is-active --quiet sparkyctrl 2>/dev/null; then
     WAS_ACTIVE=1
+    DETACH=0
     if [ -r "/proc/$PPID/cmdline" ] && tr '\0' ' ' < "/proc/$PPID/cmdline" 2>/dev/null | grep -q 'sparkyctrl serve'; then
+      DETACH=1
+    elif [ -r "/proc/$PPID/cmdline" ]; then
+      GPID=$(awk '{print $4}' "/proc/$PPID/stat" 2>/dev/null)
+      if [ -n "$GPID" ] && [ -r "/proc/$GPID/cmdline" ] && tr '\0' ' ' < "/proc/$GPID/cmdline" 2>/dev/null | grep -q 'sparkyctrl serve'; then
+        DETACH=1
+      fi
+    fi
+    if [ "$DETACH" -eq 1 ]; then
       UPGRADE_SCRIPT="/tmp/sparkyctrl-upgrade-$$.sh"
       curl -fsSL "https://raw.githubusercontent.com/${REPO}/master/deploy/install.sh" -o "$UPGRADE_SCRIPT" 2>/dev/null
       if [ -s "$UPGRADE_SCRIPT" ]; then
         chmod +x "$UPGRADE_SCRIPT"
-        nohup "$UPGRADE_SCRIPT" "$@" > /tmp/sparkyctrl-upgrade.log 2>&1 &
+        nohup "$UPGRADE_SCRIPT" "${ORIG_ARGS[@]}" > /tmp/sparkyctrl-upgrade.log 2>&1 &
         echo "==> running under sparkyctrl — install detached to background"
         echo "==> sparkyctrl will restart in a few seconds (check /tmp/sparkyctrl-upgrade.log)"
         exit 0
