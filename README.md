@@ -40,15 +40,24 @@ before you install — it is not optional reading for this tool.
 
 ## Quickstart
 
-**1. Install the worker** on the machine you want to drive (Linux, runs as root, starts listening):
+**1. Install the worker** on the machine you want to drive. It prints a token and a matching
+client snippet, and starts listening.
+
+**Linux** (runs as root):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.sh \
   | sudo bash -s -- --start
 ```
 
-The installer prints a token and a matching client snippet. (Windows, Docker, fence options, and
-hardened mode are in the [installation guide](docs/getting-started.md).)
+**Windows** (elevated PowerShell; runs as SYSTEM, Private-profile firewall only):
+
+```powershell
+irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1
+.\install.ps1 -Start
+```
+
+Docker, fence options, and hardened mode are in the [installation guide](docs/getting-started.md).
 
 **2. Set up the client** on the agent side — name the host and store its token in a file so the
 secret never lands on a command line:
