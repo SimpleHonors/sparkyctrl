@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// LoadHosts parses a minimal `name = "addr"` file. Blank lines and lines
-// beginning with # are ignored. A missing file yields an empty map (not an
-// error) so raw host:port addresses still work.
-func LoadHosts(path string) (map[string]string, error) {
+// loadPairs parses a minimal `name = "value"` file. Blank lines and lines
+// beginning with # are ignored, surrounding quotes are trimmed. A missing
+// file yields an empty map (not an error).
+func loadPairs(path string) (map[string]string, error) {
 	out := map[string]string{}
 	f, err := os.Open(path)
 	if err != nil {
@@ -38,6 +38,17 @@ func LoadHosts(path string) (map[string]string, error) {
 		}
 	}
 	return out, sc.Err()
+}
+
+// LoadHosts parses the `name = "addr"` address book. A missing file yields an
+// empty map (not an error) so raw host:port addresses still work.
+func LoadHosts(path string) (map[string]string, error) {
+	return loadPairs(path)
+}
+
+// LoadTokens parses the `name = "token"` per-host client token file.
+func LoadTokens(path string) (map[string]string, error) {
+	return loadPairs(path)
 }
 
 // Resolve turns a name (or a literal host:port) into a base URL.

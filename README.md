@@ -23,6 +23,10 @@ It's a sharp tool built for a specific operator on a specific network. `exec` an
 edit, ls) can be confined to a directory via an opt-in fence. Authentication is enforced via a 
 shared token generated at install time, which can be disabled if your network is your boundary.
 
+On the client side, put each host's token in `~/.sparkyctrl/tokens` (`name = "token"`, same
+format as the address book, `chmod 600`) so the secret never appears on a command line.
+`SPARKYCTRL_TOKEN` still works as an override for scripts.
+
 ## Security reality
 
 sparkyctrl gives agents root on your machines. The token keeps honest agents honest on a

@@ -41,7 +41,8 @@ CLIENT (run from the agent side):
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
-Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (client auth token).
+Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKENS (tokens file path),
+     SPARKYCTRL_TOKEN (token override). Per-host tokens: ~/.sparkyctrl/tokens (name = "token").
 
   sparkyctrl --version                 print version`
 
@@ -94,6 +95,39 @@ func hostsPath() string {
 	return filepath.Join(home, ".sparkyctrl", "hosts.toml")
 }
 
+func tokensPath() string {
+	if p := os.Getenv("SPARKYCTRL_TOKENS"); p != "" {
+		return p
+	}
+	if _, err := os.Stat("tokens"); err == nil {
+		return "tokens"
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".sparkyctrl", "tokens")
+}
+
+// looseFilePerms reports whether a file mode grants any group/other access.
+func looseFilePerms(mode os.FileMode) bool {
+	return mode.Perm()&0o077 != 0
+}
+
+// resolveToken returns the client auth token for host: SPARKYCTRL_TOKEN wins,
+// else the per-host entry in the tokens file. Warns once if the file is loose.
+func resolveToken(host string) string {
+	if t := os.Getenv("SPARKYCTRL_TOKEN"); t != "" {
+		return t
+	}
+	path := tokensPath()
+	if info, err := os.Stat(path); err == nil && looseFilePerms(info.Mode()) {
+		fmt.Fprintf(os.Stderr, "sparkyctrl: warning: %s is readable by others (chmod 600)\n", path)
+	}
+	tokens, err := client.LoadTokens(path)
+	if err != nil {
+		return ""
+	}
+	return tokens[host]
+}
+
 func mkClient(host string) (*client.Client, error) {
 	hosts, err := client.LoadHosts(hostsPath())
 	if err != nil {
@@ -103,7 +137,7 @@ func mkClient(host string) (*client.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(base, os.Getenv("SPARKYCTRL_TOKEN")), nil
+	return client.New(base, resolveToken(host)), nil
 }
 
 func fail(msg string) int {
