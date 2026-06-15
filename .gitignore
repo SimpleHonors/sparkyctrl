@@ -17,9 +17,8 @@ hosts.toml
 tokens
 .sparkyctrl/tokens
 
-# Internal dev-process notes (infra-specific: sandbox hosts, /root paths) — keep out of the repo
-docs/superpowers/plans/
-docs/superpowers/verification/
+# Internal dev-process notes (brainstorming specs, plans, verification) — keep out of the repo
+docs/superpowers/
 
 # OS / editor cruft
 .DS_Store
