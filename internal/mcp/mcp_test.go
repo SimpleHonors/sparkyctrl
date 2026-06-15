@@ -112,6 +112,40 @@ func TestMCPInitializeAndToolCall(t *testing.T) {
 	}
 }
 
+func TestMCPPing(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	defer clientConn.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		defer serverConn.Close()
+		done <- RunWithFactory(serverConn, serverConn, func(host string) (remoteClient, error) {
+			return &fakeClient{}, nil
+		})
+	}()
+
+	sendFrame(t, clientConn, `{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}`)
+	resp := readRPC(t, clientConn)
+	if resp.Error != nil {
+		t.Fatalf("ping returned error: %+v", resp.Error)
+	}
+	if len(resp.Result) == 0 {
+		t.Fatal("ping result missing; MCP keepalive requires an empty result object")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(resp.Result, &obj); err != nil {
+		t.Fatalf("ping result is not a JSON object: %v", err)
+	}
+	if len(obj) != 0 {
+		t.Fatalf("ping result must be an empty object, got %v", obj)
+	}
+
+	clientConn.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 type rpcEnvelope struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`

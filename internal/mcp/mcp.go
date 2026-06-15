@@ -149,6 +149,11 @@ func (s *server) handle(req rpcRequest) error {
 		})
 	case "initialized":
 		return nil
+	case "ping":
+		// MCP keepalive: respond promptly with an empty result so the
+		// transport stays alive. Without this, the default branch returns
+		// -32601 and the client tears the connection down (~50s flap).
+		return s.writeResult(req.ID, map[string]any{})
 	case "tools/list":
 		return s.writeResult(req.ID, map[string]any{
 			"tools": toolList(),
@@ -498,7 +503,6 @@ func stringMap(v any) (map[string]string, error) {
 }
 
 func readFrame(r *bufio.Reader) ([]byte, error) {
-	var length int
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -506,35 +510,48 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			break
-		}
-		key, val, ok := strings.Cut(line, ":")
-		if !ok {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(key), "content-length") {
+		// If starts with '{', treat as newline-delimited JSON.
+		if strings.HasPrefix(line, "{") {
+			return []byte(line), nil
+		}
+		// Otherwise, try Content-Length framing (legacy).
+		var length int
+		key, val, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "content-length") {
 			n, err := strconv.Atoi(strings.TrimSpace(val))
 			if err != nil {
 				return nil, err
 			}
 			length = n
 		}
+		// Read until empty line (end of headers).
+		for {
+			hdr, err := r.ReadString('\n')
+			if err != nil {
+				return nil, err
+			}
+			if strings.TrimRight(hdr, "\r\n") == "" {
+				break
+			}
+		}
+		if length <= 0 {
+			return nil, io.EOF
+		}
+		body := make([]byte, length)
+		if _, err := io.ReadFull(r, body); err != nil {
+			return nil, err
+		}
+		return body, nil
 	}
-	if length <= 0 {
-		return nil, io.EOF
-	}
-	body := make([]byte, length)
-	if _, err := io.ReadFull(r, body); err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func writeFrame(w *bufio.Writer, body []byte) error {
-	if _, err := fmt.Fprintf(w, "Content-Length: %d\r\n\r\n", len(body)); err != nil {
+	if _, err := w.Write(body); err != nil {
 		return err
 	}
-	if _, err := w.Write(body); err != nil {
+	if _, err := w.Write([]byte("\n")); err != nil {
 		return err
 	}
 	return w.Flush()
