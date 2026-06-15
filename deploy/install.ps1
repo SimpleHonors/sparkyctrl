@@ -196,12 +196,14 @@ if ($Binary) {
 # 2. Make sure the fence and audit-log locations exist.
 if ($Fence) { New-Item -ItemType Directory -Force -Path $Fence | Out-Null }
 New-Item -ItemType Directory -Force -Path (Split-Path $Audit) | Out-Null
-# Create the audit file and lock its ACL to SYSTEM (the service account) + Administrators,
-# mirroring the touch+chown the Linux installer does. The worker runs as SYSTEM and opens
-# this file on startup; if it cannot, serve exits. icacls /grant:r replaces the ACL outright,
-# so this also self-heals a corrupted or empty audit-log ACL on reinstall.
+# Create the audit file and make sure the SYSTEM service account can open it (the worker
+# runs as SYSTEM and exits if it cannot open this file on startup). We do NOT lock it down
+# like the token: the audit log is not a secret, and the Linux installer leaves it readable.
+# /inheritance:e re-applies the parent directory's inherited ACEs (so admins / the interactive
+# user keep access) and self-heals a stripped or empty audit-log ACL on reinstall; the explicit
+# SYSTEM:F grant guarantees the service can always write it.
 if (-not (Test-Path -LiteralPath $Audit)) { New-Item -ItemType File -Force -Path $Audit | Out-Null }
-Set-RestrictedAcl $Audit
+& icacls $Audit /inheritance:e /grant "*S-1-5-18:(F)" | Out-Null
 
 # 3. Resolve the worker auth material.
 if (-not $NoAuth) {
