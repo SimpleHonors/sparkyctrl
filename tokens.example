@@ -1,0 +1,7 @@
+# sparkyctrl client tokens — one shared secret per host (chmod 600).
+# Same format as hosts.toml. Copy to ~/.sparkyctrl/tokens (or ./tokens) and fill in.
+# The client reads the matching token by host name, so it never touches the command line.
+# SPARKYCTRL_TOKEN, if set, overrides everything (useful for scripts).
+
+nas2   = "REPLACE_WITH_NAS2_TOKEN"
+unraid = "REPLACE_WITH_UNRAID_TOKEN"

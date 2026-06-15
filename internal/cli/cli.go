@@ -41,7 +41,8 @@ CLIENT (run from the agent side):
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
-Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKEN (client auth token).
+Env: SPARKYCTRL_HOSTS (hosts file path), SPARKYCTRL_TOKENS (tokens file path),
+     SPARKYCTRL_TOKEN (token override). Per-host tokens: ~/.sparkyctrl/tokens (name = "token").
 
   sparkyctrl --version                 print version`
 
