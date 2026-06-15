@@ -5,152 +5,119 @@
 > ## 💡 What you need to know
 >
 > This is a **remote-code-execution daemon** you install on purpose. It runs commands as root
-> with a **shared token for auth**. It is built strictly for a **trusted LAN**. 
+> with a **shared token for auth**. It is built strictly for a **trusted LAN**.
 > If you expose this port to the internet, you have not deployed a tool—you have published a root shell.
 >
-> It solves a real problem: AI agents are genuinely bad at shells. It does this by being a sharp 
+> It solves a real problem: AI agents are genuinely bad at shells. It does this by being a sharp
 > tool rather than a padded room. Know exactly what you're installing.
 
-## What this actually is
+---
+
+## Contents
+
+- [What this is](#what-this-is)
+- [Quickstart](#quickstart) — install and run a command in under a minute
+- [Command cheat-sheet](#command-cheat-sheet)
+- [Deployment](#deployment) — systemd · Unraid · Docker
+- [Documentation](#documentation)
+- [Security](#security)
+- [Philosophy & status](#philosophy--status)
+
+---
+
+## What this is
 
 sparkyctrl lets an AI agent run commands and move files on another machine with **no shell in
 the middle to mangle them.** Commands go out as a structured argument array straight to the OS
-`exec` call. This prevents the quoting and escaping disasters that happen when an agent drives 
-a box over SSH.
+`exec` call. This prevents the quoting and escaping disasters that happen when an agent drives a
+box over SSH — one stray backtick or unquoted `$(...)` can't turn "list the logs" into something
+that halts the machine.
 
 It's a sharp tool built for a specific operator on a specific network. `exec` and `shell` run as
-**root**, unfenced, by design — that is the product, not an oversight. File verbs (read, write, 
-edit, ls) can be confined to a directory via an opt-in fence. Authentication is enforced via a 
-shared token generated at install time, which can be disabled if your network is your boundary.
+**root**, unfenced, by design. File verbs (`read`, `write`, `edit`, `ls`) can be confined to a
+directory via an opt-in fence. Auth is a shared token. Read the [security model](docs/security.md)
+before you install — it is not optional reading for this tool.
 
-On the client side, put each host's token in `~/.sparkyctrl/tokens` (`name = "token"`, same
-format as the address book, `chmod 600`) so the secret never appears on a command line.
-`SPARKYCTRL_TOKEN` still works as an override for scripts.
+## Quickstart
 
-## Security reality
-
-sparkyctrl gives agents root on your machines. The token keeps honest agents honest on a
-trusted LAN, and that's its entire job. If that sentence doesn't sit right, don't install it.
-
-- **If this port touches the internet, you've published a root shell.** No exceptions.
-- Token auth is **a lock on the door, not a bank vault.** Disable it (`--no-auth`) only on a network you physically control.
-- `exec` and `shell` are **unfenced by design.** The path fence limits file verbs only.
-- If you wouldn't hand the token to a stranger with a root prompt, this tool is not for you.
-
-## Why this exists anyway
-
-Every layer — local shell, SSH, the remote shell — re-parses a command. One stray backtick or unquoted
-`$(...)` can turn "list the logs" into something that halts the machine. sparkyctrl removes the
-shells from the default path so that class of bug cannot happen.
-
-## Install
-
-The installer **asks where to fence the worker's file operations** — it does not bake in a
-path. Answer the prompt with a directory to confine to, or `none` for full filesystem access;
-or pass `--fence DIR` / `--no-fence` up front for an unattended install. It also generates a
-worker token file by default and prints a matching `export SPARKYCTRL_TOKEN="..."` snippet for the
-client side.
-
-**Linux** — installs as **root** and starts listening:
+**1. Install the worker** on the machine you want to drive (Linux, runs as root, starts listening):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.sh \
   | sudo bash -s -- --start
 ```
 
-**Windows** — in an **elevated** PowerShell; runs as **SYSTEM**, opens a Private-profile
-firewall rule (never Public/internet), and registers an auto-restarting scheduled task:
+The installer prints a token and a matching client snippet. (Windows, Docker, fence options, and
+hardened mode are in the [installation guide](docs/getting-started.md).)
 
-```powershell
-$ProgressPreference = 'SilentlyContinue'   # else the download progress bar can look frozen
-irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1
-.\install.ps1 -Start
+**2. Set up the client** on the agent side — name the host and store its token in a file so the
+secret never lands on a command line:
+
+```sh
+mkdir -p ~/.sparkyctrl
+echo 'nas2 = "192.0.2.50:7766"' > ~/.sparkyctrl/hosts.toml      # name -> address
+printf 'nas2 = "PASTE_TOKEN"\n' > ~/.sparkyctrl/tokens          # name -> token
+chmod 600 ~/.sparkyctrl/tokens
 ```
 
-Both auto-download the right prebuilt binary from the latest release, are safe to **re-run to
-update** (they stop the worker, swap the binary, restart it), and **uninstall** the same way
-(`--uninstall` / `-Uninstall`).
+**3. Drive it** — no token typed, no shell to mangle the command:
 
-Flags are parallel across platforms (Linux `--lower-case`, Windows `-PascalCase`, same meaning):
+```sh
+sparkyctrl info nas2
+sparkyctrl exec nas2 -- uname -a
+sparkyctrl push nas2 ./build.tar.gz /tmp/build.tar.gz
+```
 
-| | Linux | Windows |
+## Command cheat-sheet
+
+| Command | What it does |
+|---|---|
+| `sparkyctrl exec  <host> -- <argv...>` | Run a command, mangle-proof; stdout/stderr/exit code returned |
+| `sparkyctrl shell <host> <script>` | Explicit, logged shell path for pipes/globs/redirects |
+| `sparkyctrl ls    <host> <path>` | List a directory |
+| `sparkyctrl read  <host> <remote>` | Print a remote file to stdout (binary-safe) |
+| `sparkyctrl write <host> <remote>` | Write stdin to a remote file |
+| `sparkyctrl push  <host> <local> <remote>` | Upload a file |
+| `sparkyctrl pull  <host> <remote> <local>` | Download a file |
+| `sparkyctrl edit  <host> <remote> --old S --new S [--all]` | Exact-string edit; refuses on no/ambiguous match |
+| `sparkyctrl info  <host>` | Worker info (OS/arch/version/fence) |
+| `sparkyctrl mcp` | Run as a stdio MCP server |
+
+Add `--json` to any client verb for raw output. Full reference with examples and flags:
+[docs/commands.md](docs/commands.md).
+
+## Deployment
+
+| Target | One-liner | Guide |
 |---|---|---|
-| confine file ops | `--fence DIR` | `-Fence DIR` |
-| full access (no fence) | `--no-fence` | `-NoFence` |
-| listen address | `--addr H:P` | `-Addr H:P` |
-| audit log path | `--audit FILE` | `-Audit FILE` |
-| override token | `--token T` | `-Token T` |
-| disable auth | `--no-auth` | `-NoAuth` |
-| release version | `--version V` | `-Version V` |
-| use a local binary | `--binary PATH` | `-Binary PATH` |
-| start now | `--start` | `-Start` |
-| uninstall | `--uninstall` | `-Uninstall` |
+| **Linux (systemd)** | install script registers an auto-restart service | [deployment.md](docs/deployment.md#systemd) |
+| **Unraid** | reboot-persistent worker that survives the RAM-disk wipe | [deployment.md](docs/deployment.md#unraid) · [deploy/unraid/](deploy/unraid/README.md) |
+| **Docker** | scratch image for the fenced file-serving use case | [deployment.md](docs/deployment.md#docker) |
 
-**Linux-only** (these need systemd): `--mode hardened` runs the worker as a dedicated
-unprivileged user with zero capabilities and a read-only filesystem except the fence + audit
-log (`exec`/`shell` no longer run as root); add `--container` for that mode inside an
-unprivileged LXC. On Windows the worker always runs as SYSTEM (admin-equivalent). Build from
-source with `./deploy/build.sh`.
+## Documentation
 
-> Windows is less battle-tested than Linux: if something is going to be weird, it'll be weird
-> on Windows first.
+- [**Getting started**](docs/getting-started.md) — install the worker (Linux/Windows/Docker) and client, run your first command, troubleshooting.
+- [**Deployment**](docs/deployment.md) — systemd, Unraid reboot-persistence, Docker.
+- [**Security model**](docs/security.md) — threat model, token auth, the fence, `--no-auth`, the audit log.
+- [**Configuration**](docs/configuration.md) — `hosts.toml`, the tokens file, environment variables, worker flags.
+- [**Commands**](docs/commands.md) — every verb with copy-paste examples and full flags.
+- [**MCP server**](docs/mcp.md) — expose every verb as MCP tools.
 
-## Using it
+## Security
 
-From the agent side — a CLI, so it adds ~nothing to an agent's context budget:
+sparkyctrl gives agents root on your machines. The token keeps honest agents honest on a trusted
+LAN, and that's its entire job. If that sentence doesn't sit right, don't install it.
 
-- `sparkyctrl exec  <host> -- <argv...>` — run a command, mangle-proof; stdout/stderr/exit code back.
-- `sparkyctrl shell <host> <script>` — explicit, logged shell path for pipes/globs/etc.
-  (`cmd` on Windows, `/bin/sh` on Unix; use `--shell powershell` for PS scripts).
-  Pipe scripts via stdin: `echo script | sparkyctrl shell host`.
-- `sparkyctrl read|write|ls|push|pull <host> ...` — binary-safe file operations.
-- `sparkyctrl edit  <host> <remote> --old X --new Y [--all]`
-  — surgical exact-string replacement; refuses on no-match or ambiguous match (atomic write).
-  On failure returns a diagnostic showing what was searched for and the file head, so
-  mismatches (CRLF vs LF, missing whitespace) are immediately visible without re-reading the file.
-  Multiline or binaryish strings use `--old-file PATH` / `--new-file PATH` in place of `--old`/`--new`.
-- `sparkyctrl info  <host>` — worker info.
-- `sparkyctrl mcp` — stdio MCP server (see MCP section below).
-- `sparkyctrl --version` — print the version.
+- **If this port touches the internet, you've published a root shell.** No exceptions.
+- Token auth is **a lock on the door, not a bank vault.** Disable it (`--no-auth`) only on a network you physically control.
+- `exec` and `shell` are **unfenced by design.** The path fence limits file verbs only.
+- The audit log is **a flight recorder, not a seatbelt** — it records what happened, it prevents nothing.
 
-`<host>` is a name from `~/.sparkyctrl/hosts.toml` or a literal `host:port`. Add `--json` to any
-verb for raw output.
+The full reasoning lives in [docs/security.md](docs/security.md). Read it.
 
-## MCP server (optional)
-
-If your agent speaks MCP natively, `sparkyctrl mcp` exposes every verb as an MCP tool — no
-CLI required. It's a local stdio server, not a network service. It reuses your existing
-`~/.sparkyctrl/hosts.toml` and `SPARKYCTRL_TOKEN`.
-
-**Wire into your agent's MCP config:**
-
-```json
-{
-  "mcpServers": {
-    "sparkyctrl": {
-      "command": "sparkyctrl",
-      "args": ["mcp"],
-      "env": { "SPARKYCTRL_TOKEN": "<your-token>" }
-    }
-  }
-}
-```
-
-**Tools exposed:** `exec`, `shell`, `read`, `write`, `edit`, `ls`, `info` — each takes a `host`
-parameter plus verb-specific arguments. Token auth passes through automatically from the
-environment.
-
-## The audit log keeps receipts, not guarantees
-
-Every request — including denied ones — is logged with its source IP and outcome. This tells you
-**what happened.** It does **not** prevent anything, and anyone with `exec` access can truncate
-the log through the same channel it audits. It is a flight recorder, not a seatbelt.
-
-## Philosophy
+## Philosophy & status
 
 A sharp tool for a trusted operator. No guardrails beyond an opt-in fence; the audit log keeps
-receipts rather than preventing. Design details live in `docs/superpowers/specs/`.
+receipts rather than preventing. Design notes live in `docs/superpowers/specs/`.
 
-## Status
-
-v0.1.13 — public. Built, tested, and running on exactly one person's trusted LAN.
+**v0.1.13** — built, tested, and running on a trusted LAN.
