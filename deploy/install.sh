@@ -49,14 +49,62 @@ WAS_ACTIVE=0
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 usage() { awk 'NR>2 && /^#/ {sub(/^# ?/,""); print; next} NR>2 {exit}' "$0"; }
+have_command() { command -v "$1" >/dev/null 2>&1; }
 gen_token() {
-  if command -v openssl >/dev/null 2>&1; then
+  if have_command openssl; then
     openssl rand -hex 32
-  elif command -v od >/dev/null 2>&1; then
+  elif have_command od; then
     od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
   else
     die "need openssl or od to generate a worker token"
   fi
+}
+
+download_url() {
+  local url="$1"
+  local dest="$2"
+
+  if have_command curl; then
+    curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "$url" -o "$dest" \
+      || die "download failed: ${url}"
+    return
+  fi
+
+  if have_command wget; then
+    wget -q --header="Cache-Control: no-cache" --header="Pragma: no-cache" \
+      --output-document="$dest" "$url" || die "download failed: ${url}"
+    return
+  fi
+
+  die "need curl or wget to download release binaries; install one and retry"
+}
+
+prompt_for_fence() {
+  local need="$1"
+  local ans=""
+
+  if ! { : > /dev/tty; } 2>/dev/null; then
+    if [ -n "$need" ]; then
+      die "$need; pass --fence <dir> explicitly when running non-interactively"
+    fi
+    die "no terminal to prompt for fence choice: pass --fence <dir> or --no-fence explicitly"
+  fi
+
+  while :; do
+    {
+      echo "Confine the worker's file operations to a directory (the \"fence\")?"
+      echo "  - enter an ABSOLUTE path to confine to it (recommended)"
+      [ -z "$need" ] && echo "  - type 'none' for FULL filesystem access (dangerous)"
+      printf 'fence path%s: ' "$([ -z "$need" ] && echo ' [or none]')"
+    } > /dev/tty
+    read -r ans < /dev/tty || die "no fence chosen"
+    case "$ans" in
+      none|NONE) [ -z "$need" ] && { NO_FENCE=1; break; } || echo "hardened mode needs a path." > /dev/tty ;;
+      /*) FENCE="$ans"; break ;;
+      "") echo "Please enter an absolute path${need:+ }." > /dev/tty ;;
+      *)  echo "Enter an ABSOLUTE path (starting with /)${need:+, no 'none' in hardened mode}." > /dev/tty ;;
+    esac
+  done
 }
 
 while [ $# -gt 0 ]; do
@@ -104,26 +152,7 @@ if [ -z "$FENCE" ] && [ "$NO_FENCE" -ne 1 ]; then
   else
     NEED=""
   fi
-  if { : > /dev/tty; } 2>/dev/null; then
-    while :; do
-      {
-        echo "Confine the worker's file operations to a directory (the \"fence\")?"
-        echo "  - enter an ABSOLUTE path to confine to it (recommended)"
-        [ -z "$NEED" ] && echo "  - type 'none' for FULL filesystem access (dangerous)"
-        printf 'fence path%s: ' "$([ -z "$NEED" ] && echo ' [or none]')"
-      } > /dev/tty
-      read -r ans < /dev/tty || die "no fence chosen"
-      case "$ans" in
-        none|NONE) [ -z "$NEED" ] && { NO_FENCE=1; break; } || echo "hardened mode needs a path." > /dev/tty ;;
-        /*) FENCE="$ans"; break ;;
-        "") echo "Please enter an absolute path${NEED:+ }." > /dev/tty ;;
-        *)  echo "Enter an ABSOLUTE path (starting with /)${NEED:+, no 'none' in hardened mode}." > /dev/tty ;;
-      esac
-    done
-  else
-    [ -n "$NEED" ] && die "$NEED: pass --fence <dir>"
-    die "no terminal to prompt: pass --fence <dir> to confine file operations, or --no-fence for full access"
-  fi
+  prompt_for_fence "$NEED"
 fi
 
 # Resolve the binary. Pass --binary to use a local file; otherwise download the
@@ -140,11 +169,10 @@ if [ -z "$BINARY" ]; then
   else
     URL="https://github.com/${REPO}/releases/download/${VERSION}/sparkyctrl-linux-${ARCH}"
   fi
-  command -v curl >/dev/null 2>&1 || die "curl is required to download the release binary"
   TMP="$(mktemp)"
   echo "==> downloading ${URL}"
   # Bypass intermediate caches so re-runs always fetch the current release.
-  curl -fsSL -H "Cache-Control: no-cache" -H "Pragma: no-cache" "$URL" -o "$TMP" || die "download failed: ${URL}"
+  download_url "$URL" "$TMP"
   chmod +x "$TMP"
   BINARY="$TMP"
   # Verify the binary is executable and print its version.
@@ -181,7 +209,7 @@ else
     fi
     if [ "$DETACH" -eq 1 ]; then
       UPGRADE_SCRIPT="/tmp/sparkyctrl-upgrade-$$.sh"
-      curl -fsSL "https://raw.githubusercontent.com/${REPO}/master/deploy/install.sh" -o "$UPGRADE_SCRIPT" 2>/dev/null
+      download_url "https://raw.githubusercontent.com/${REPO}/master/deploy/install.sh" "$UPGRADE_SCRIPT"
       if [ -s "$UPGRADE_SCRIPT" ]; then
         chmod +x "$UPGRADE_SCRIPT"
         # Run detached in a new systemd scope to escape the sparkyctrl service
