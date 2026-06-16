@@ -6,15 +6,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/SimpleHonors/sparkyctrl/internal/client"
 	"github.com/SimpleHonors/sparkyctrl/internal/mcp"
 	"github.com/SimpleHonors/sparkyctrl/internal/protocol"
 	"github.com/SimpleHonors/sparkyctrl/internal/server"
+	"github.com/SimpleHonors/sparkyctrl/internal/upgrade"
 )
 
 const usage = `sparkyctrl - mangle-proof remote sysadmin for AI agents
@@ -38,6 +42,7 @@ CLIENT (run from the agent side):
                                            (--old-file/--new-file for multiline)
   sparkyctrl info  <host>                  show worker info
   sparkyctrl mcp                           stdio MCP server wrapping the client
+  sparkyctrl upgrade [--version vX] [--check] [--no-restart]   self-update from the official release
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
@@ -165,6 +170,8 @@ func Run(args []string) int {
 		return runServe(rest)
 	case "mcp":
 		return runMCP(rest)
+	case "upgrade":
+		return runUpgrade(args[1:])
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return 0
@@ -515,6 +522,43 @@ func runMCP(args []string) int {
 		return fail("usage: mcp")
 	}
 	if err := mcp.Run(os.Stdin, os.Stdout); err != nil {
+		return fail(err.Error())
+	}
+	return 0
+}
+
+func runUpgrade(args []string) int {
+	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
+	version := fs.String("version", "", "target version (default: latest release)")
+	check := fs.Bool("check", false, "report current vs available and exit")
+	noRestart := fs.Bool("no-restart", false, "install the binary but do not restart the worker")
+	service := fs.String("service", "sparkyctrl", "systemd unit / Windows task name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return fail("cannot resolve own path: " + err.Error())
+	}
+	deps := upgrade.Deps{
+		Client:         &http.Client{Timeout: 60 * time.Second},
+		APIBase:        upgrade.DefaultAPIBase,
+		Runner:         upgrade.OSRunner{},
+		GOOS:           runtime.GOOS,
+		GOARCH:         runtime.GOARCH,
+		CurrentBinary:  self,
+		CurrentVersion: protocol.Version,
+		Exists:         func(p string) bool { _, e := os.Stat(p); return e == nil },
+		Stdout:         os.Stdout,
+	}
+	opts := upgrade.Options{
+		Repo:          upgrade.DefaultRepo,
+		TargetVersion: *version,
+		Service:       *service,
+		CheckOnly:     *check,
+		NoRestart:     *noRestart,
+	}
+	if err := upgrade.Run(deps, opts); err != nil {
 		return fail(err.Error())
 	}
 	return 0
