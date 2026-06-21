@@ -48,6 +48,26 @@ can truncate the log through the same channel it audits. It is a flight recorder
 On Unraid the default audit path is in RAM (`/var/log/...`) and resets on reboot; point `--audit`
 at a path on the array if you want it to persist.
 
+### Tamper-evident chain (worker, since v0.1.16)
+
+Passing `--audit <path>` auto-generates an HMAC-SHA256 key (or reuses one
+already at `<path>.key`) and chains every record with a `prev_hash` + `hmac`
+pair. Run `sparkyctrl verify <path>` to confirm the log has not been edited,
+truncated, or reordered since it was written:
+
+| Exit | Meaning |
+|---|---|
+| 0 | chain intact |
+| 1 | tampered (line number printed) |
+| 2 | log contains legacy un-chained records, or no key was supplied |
+
+The chain only proves **that** tampering happened, not what the original
+content was. To survive a worker compromise you still need **off-box
+forwarding** (syslog, journald, append-only collector on a different host) so
+the attacker cannot reach the sink. That is a separate, larger feature —
+this chain is a defense-in-depth stopgap that catches casual `truncate -s0`
+attempts and post-incident forensics, not a determined attacker with root.
+
 ## Why no shell is itself a safety feature
 
 `exec` sends a structured argument array straight to the OS `exec` call — no shell re-parses it.

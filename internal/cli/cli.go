@@ -2,7 +2,9 @@
 package cli
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -43,6 +45,7 @@ CLIENT (run from the agent side):
   sparkyctrl info  <host>                  show worker info
   sparkyctrl mcp                           stdio MCP server wrapping the client
   sparkyctrl upgrade [--version vX] [--check] [--no-restart]   self-update from the official release
+  sparkyctrl verify <audit.log> [--key HEX]   verify tamper-evident audit chain (exit 0=ok, 1=tampered, 2=legacy)
 
 Host is a name from ~/.sparkyctrl/hosts.toml (or ./hosts.toml), or a literal host:port.
 Add --json to any client verb for raw JSON output.
@@ -172,6 +175,8 @@ func Run(args []string) int {
 		return runMCP(rest)
 	case "upgrade":
 		return runUpgrade(args[1:])
+	case "verify":
+		return runVerify(rest)
 	case "-h", "--help", "help":
 		fmt.Println(usage)
 		return 0
@@ -489,10 +494,39 @@ func runServe(args []string) int {
 	token := fs.String("token", "", "explicit shared token override")
 	noAuth := fs.Bool("no-auth", false, "disable token authentication")
 	auditPath := fs.String("audit", "", "audit log file path")
+	auditKey := fs.String("audit-key", "", "hex HMAC key for tamper-evident audit chain; auto-generated and persisted to <audit>.key if empty")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	auditor, err := server.NewAuditor(*auditPath)
+	var keyBytes []byte
+	if *auditKey != "" {
+		raw, err := hex.DecodeString(*auditKey)
+		if err != nil || len(raw) == 0 {
+			return fail("audit-key: must be non-empty hex")
+		}
+		keyBytes = raw
+	} else if *auditPath != "" {
+		// Try to load an existing key from <audit>.key; otherwise generate one.
+		keyPath := *auditPath + ".key"
+		if data, err := os.ReadFile(keyPath); err == nil {
+			raw, err := hex.DecodeString(strings.TrimSpace(string(data)))
+			if err != nil || len(raw) == 0 {
+				return fail("audit-key file " + keyPath + ": must be non-empty hex")
+			}
+			keyBytes = raw
+		} else {
+			hexKey, err := server.GenerateAuditKey()
+			if err != nil {
+				return fail("generate audit key: " + err.Error())
+			}
+			if err := os.WriteFile(keyPath, []byte(hexKey+"\n"), 0o600); err != nil {
+				return fail("persist audit key to "+keyPath+": "+err.Error())
+			}
+			keyBytes, _ = hex.DecodeString(hexKey)
+			fmt.Fprintf(os.Stderr, "sparkyctrl: generated new audit key at %s (chmod 600; back it up off-box — losing it breaks verification)\n", keyPath)
+		}
+	}
+	auditor, err := server.NewAuditor(*auditPath, keyBytes)
 	if err != nil {
 		return fail("audit log: " + err.Error())
 	}
@@ -565,4 +599,68 @@ func runUpgrade(args []string) int {
 		return fail(err.Error())
 	}
 	return 0
+}
+
+// runVerify walks the audit log at path and reports whether the tamper-evident
+// chain is intact. Exit codes are split so scripts can tell tampering apart
+// from a missing key:
+//   0  = chain intact
+//   1  = chain tampered (line # printed to stderr)
+//   2  = no key supplied, or log contains legacy un-chained records
+//   3  = I/O / parse error
+func runVerify(args []string) int {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	keyHex := fs.String("key", "", "hex HMAC key (default: read from <audit>.key)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: sparkyctrl verify <audit.log> [--key HEX]")
+		return 2
+	}
+	path := rest[0]
+
+	var key []byte
+	if *keyHex != "" {
+		raw, err := hex.DecodeString(*keyHex)
+		if err != nil || len(raw) == 0 {
+			fmt.Fprintln(os.Stderr, "verify: --key must be non-empty hex")
+			return 2
+		}
+		key = raw
+	} else {
+		data, err := os.ReadFile(path + ".key")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "verify: cannot read key file %s.key: %v\n", path, err)
+			return 2
+		}
+		raw, err := hex.DecodeString(strings.TrimSpace(string(data)))
+		if err != nil || len(raw) == 0 {
+			fmt.Fprintf(os.Stderr, "verify: %s.key is not valid hex\n", path)
+			return 2
+		}
+		key = raw
+	}
+
+	line, err := server.Verify(path, key)
+	if err != nil {
+		if errors.Is(err, server.ErrNoAuditKey) {
+			fmt.Fprintln(os.Stderr, "verify: no key supplied")
+			return 2
+		}
+		fmt.Fprintf(os.Stderr, "verify: %v\n", err)
+		return 3
+	}
+	switch {
+	case line == 0:
+		fmt.Printf("verify: %s chain intact\n", path)
+		return 0
+	case line == -1:
+		fmt.Fprintf(os.Stderr, "verify: %s contains legacy un-chained records (no chain to verify)\n", path)
+		return 2
+	default:
+		fmt.Fprintf(os.Stderr, "verify: %s TAMPERED at line %d\n", path, line)
+		return 1
+	}
 }
