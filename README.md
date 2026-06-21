@@ -41,16 +41,18 @@ before you install — it is not optional reading for this tool.
 ## Quickstart
 
 **1. Install the worker** on the machine you want to drive. It prints a token and a matching
-client snippet, and starts listening.
+client snippet, and starts listening. The installer signature-verifies the downloaded binary
+against the pinned release key in the repo (see [security model](docs/security.md#release-integrity-signatures--checksums))
+and refuses to proceed without `minisign` on PATH.
 
-**Linux** (runs as root):
+**Linux** (runs as root; needs `minisign`):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.sh \
   | sudo bash -s -- --start
 ```
 
-**Windows** (elevated PowerShell; runs as SYSTEM, Private-profile firewall only):
+**Windows** (elevated PowerShell; runs as SYSTEM, Private-profile firewall only; needs `minisign.exe`):
 
 ```powershell
 irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1

@@ -15,18 +15,33 @@ import (
 
 func newReleaseServer(t *testing.T, payload []byte) *httptest.Server {
 	t.Helper()
+	keyFile, restore := installTestKey(t)
+	t.Cleanup(restore)
 	sum := sha256.Sum256(payload)
+	sumsText := fmt.Sprintf("%s  sparkyctrl-linux-amd64\n", hex.EncodeToString(sum[:]))
+	binSig := signStringWithTestKey(t, keyFile, payload)
+	sumsSig := signStringWithTestKey(t, keyFile, []byte(sumsText))
+
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
 			fmt.Fprintf(w, `{"tag_name":"v0.1.14","assets":[
 				{"name":"sparkyctrl-linux-amd64","browser_download_url":%q},
-				{"name":"SHA256SUMS","browser_download_url":%q}]}`,
-				"http://"+r.Host+"/bin", "http://"+r.Host+"/sums")
+				{"name":"sparkyctrl-linux-amd64.minisig","browser_download_url":%q},
+				{"name":"SHA256SUMS","browser_download_url":%q},
+				{"name":"SHA256SUMS.minisig","browser_download_url":%q}]}`,
+				"http://"+r.Host+"/bin",
+				"http://"+r.Host+"/bin.minisig",
+				"http://"+r.Host+"/sums",
+				"http://"+r.Host+"/sums.minisig")
 		case r.URL.Path == "/bin":
 			w.Write(payload)
+		case r.URL.Path == "/bin.minisig":
+			w.Write([]byte(binSig))
 		case r.URL.Path == "/sums":
 			fmt.Fprintf(w, "%s  sparkyctrl-linux-amd64\n", hex.EncodeToString(sum[:]))
+		case r.URL.Path == "/sums.minisig":
+			w.Write([]byte(sumsSig))
 		default:
 			http.Error(w, "no", 404)
 		}

@@ -32,6 +32,7 @@ param(
     [string]$Repo        = "SimpleHonors/sparkyctrl",
     [string]$InstallDir  = "$Env:ProgramFiles\sparkyctrl",
     [string]$ServiceName = "sparkyctrl",
+    [string]$PubKey      = "",       # Pinned release public key (minisign). Defaults to ./sparkyctrl-release.pub next to this script.
     [switch]$Start,
     [switch]$Uninstall,
     [switch]$NoFence
@@ -75,6 +76,39 @@ function Test-AgainstChecksum {
         throw "checksum mismatch for $AssetName: got $hash want $expected"
     }
 }
+
+# Test-AgainstSignature <file> <signature_file> <pubkey_file>
+# Confirms <file>'s detached minisign signature at <signature_file> is valid
+# against the public key at <pubkey_file>. Uses the minisign CLI (jedisct1's
+# tool, available via choco / winget / scoop). The CLI internally checks both
+# the primary signature (file digest) and the global signature (binds the
+# trusted comment to the same key) so a single `minisign -Vm` call covers
+# both halves of the verify.
+#
+# Throws on any failure. Throws (not returns false) so the caller can rely on
+# `$LASTEXITCODE` semantics — a successful exit means the file is signed by
+# the pinned release key, full stop.
+function Test-AgainstSignature {
+    param(
+        [Parameter(Mandatory)][string]$File,
+        [Parameter(Mandatory)][string]$SignatureFile,
+        [Parameter(Mandatory)][string]$PubKeyFile
+    )
+    if (-not (Test-Path -LiteralPath $PubKeyFile)) {
+        throw "pinned release public key not found at $PubKeyFile (set -PubKey or place sparkyctrl-release.pub next to install.ps1)"
+    }
+    if (-not (Test-Path -LiteralPath $SignatureFile)) {
+        throw "minisign signature file not found at $SignatureFile (release may predate the signing key — refusing to install unverified)"
+    }
+    $minisign = (Get-Command minisign.exe -ErrorAction SilentlyContinue).Source
+    if (-not $minisign) {
+        throw "minisign.exe is required for signature verification (install with: choco install minisign | winget install jedisct1.minisign)"
+    }
+    $output = & minisign.exe -Vm $File -p $PubKeyFile -x $SignatureFile 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "minisign signature verification failed for $([System.IO.Path]::GetFileName($File)) — binary was not signed by the pinned release key. minisign output: $output"
+    }
+}
 function Set-RestrictedAcl($Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     & icacls $Path /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" | Out-Null
@@ -92,6 +126,7 @@ function Get-RelaunchArgs {
             "Version"     { $out += @("-Version", $entry.Value) }
             "Repo"        { $out += @("-Repo", $entry.Value) }
             "InstallDir"  { $out += @("-InstallDir", $entry.Value) }
+            "PubKey"      { if ($entry.Value) { $out += @("-PubKey", $entry.Value) } }
             "ServiceName" { $out += @("-ServiceName", $entry.Value) }
             "Start"       { if ($entry.Value) { $out += "-Start" } }
             "Uninstall"   { if ($entry.Value) { $out += "-Uninstall" } }
@@ -197,11 +232,27 @@ if ($Binary) {
     if ($Version -eq "latest") {
         $url = "https://github.com/$Repo/releases/latest/download/sparkyctrl-windows-amd64.exe"
         $sumsUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
+        $sigUrl = "https://github.com/$Repo/releases/latest/download/sparkyctrl-windows-amd64.exe.minisig"
+        $sumsSigUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS.minisig"
     } else {
         $url = "https://github.com/$Repo/releases/download/$Version/sparkyctrl-windows-amd64.exe"
         $sumsUrl = "https://github.com/$Repo/releases/download/$Version/SHA256SUMS"
+        $sigUrl = "https://github.com/$Repo/releases/download/$Version/sparkyctrl-windows-amd64.exe.minisig"
+        $sumsSigUrl = "https://github.com/$Repo/releases/download/$Version/SHA256SUMS.minisig"
     }
+    # Resolve the public key. Default to ./sparkyctrl-release.pub next to this
+    # script (the file ships in the repo at deploy/sparkyctrl-release.pub and
+    # is read via $PSScriptRoot). Override with -PubKey.
+    if (-not $PubKey) {
+        $PubKey = Join-Path $PSScriptRoot "sparkyctrl-release.pub"
+    }
+    if (-not (Test-Path -LiteralPath $PubKey)) {
+        throw "pinned release public key not found at $PubKey (pass -PubKey <path> to override)"
+    }
+
     $sumsTmp = Join-Path $env:TEMP ("sparkyctrl-sums-" + [guid]::NewGuid().ToString("N") + ".txt")
+    $sigTmp = Join-Path $env:TEMP ("sparkyctrl-sig-" + [guid]::NewGuid().ToString("N") + ".minisig")
+    $sumsSigTmp = Join-Path $env:TEMP ("sparkyctrl-sums-sig-" + [guid]::NewGuid().ToString("N") + ".minisig")
     try {
         Info "downloading $url"
         # Bypass any intermediate caches (GitHub CDN, transparent proxies) so a
@@ -212,13 +263,26 @@ if ($Binary) {
         Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsTmp -UseBasicParsing `
             -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"} `
             -ErrorAction Stop
-        # Verify the binary against the published SHA256SUMS. A downloaded-but-
-        # unverified binary is the supply-chain risk the SHA256SUMS artifact
-        # exists to prevent: skip this check only by passing -Binary <local-file>.
-        # Matches the Go upgrade path's verifyChecksum() in internal/upgrade/download.go.
+        Info "downloading $sigUrl"
+        Invoke-WebRequest -Uri $sigUrl -OutFile $sigTmp -UseBasicParsing `
+            -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"} `
+            -ErrorAction Stop
+        Info "downloading $sumsSigUrl"
+        Invoke-WebRequest -Uri $sumsSigUrl -OutFile $sumsSigTmp -UseBasicParsing `
+            -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"} `
+            -ErrorAction Stop
+        # Defense in depth: every artifact must verify. Signatures FIRST (so a
+        # tampered SHA256SUMS still gets caught by SHA256SUMS.minisig, and a
+        # tampered binary still gets caught by the binary's own .minisig). The
+        # SHA256SUMS body is checked last so even if both sigs were broken,
+        # hash mismatch is still surfaced.
+        Test-AgainstSignature -File $dest -SignatureFile $sigTmp -PubKeyFile $PubKey
+        Test-AgainstSignature -File $sumsTmp -SignatureFile $sumsSigTmp -PubKeyFile $PubKey
         Test-AgainstChecksum -BinaryPath $dest -AssetName "sparkyctrl-windows-amd64.exe" -SumsText (Get-Content -Raw $sumsTmp)
     } finally {
         Remove-Item -LiteralPath $sumsTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sigTmp -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $sumsSigTmp -Force -ErrorAction SilentlyContinue
     }
 
     # Verify the binary actually works and report its version so the operator

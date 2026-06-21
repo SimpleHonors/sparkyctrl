@@ -32,6 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/depl
   | sudo bash -s -- --start
 ```
 
+The installer needs **`minisign`** on PATH (apt: `apt-get install minisign`, brew: `brew install
+minisign`, dnf: `dnf install minisign`). Without it the install refuses to proceed — the binary
+is signature-verified against the pinned key in the repo (`deploy/sparkyctrl-release.pub`) before
+it's allowed anywhere near `/usr/local/bin`. See [security.md](security.md#release-integrity-signatures--checksums)
+for what the verify buys you.
+
 The worker writes its token to `/etc/sparkyctrl/token` and listens on `0.0.0.0:7766` by default.
 Uninstall with `--uninstall`.
 
@@ -49,6 +55,12 @@ $ProgressPreference = 'SilentlyContinue'   # else the download progress bar can 
 irm https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/install.ps1 -OutFile install.ps1
 .\install.ps1 -Start
 ```
+
+The installer needs **`minisign.exe`** on PATH (choco: `choco install minisign`, winget:
+`winget install jedisct1.minisign`). Without it the install refuses to proceed — the binary
+is signature-verified against the pinned key in the repo (`deploy/sparkyctrl-release.pub`,
+read next to `install.ps1` or via `-PubKey <path>`) before it's allowed under `Program Files`.
+See [security.md](security.md#release-integrity-signatures--checksums).
 
 Uninstall with `-Uninstall`.
 

@@ -14,11 +14,13 @@ const DefaultAPIBase = "https://api.github.com"
 
 // Release is the resolved upgrade target for this host.
 type Release struct {
-	Tag         string
-	Version     string
-	AssetName   string
-	AssetURL    string
-	ChecksumURL string
+	Tag             string
+	Version         string
+	AssetName       string
+	AssetURL        string
+	ChecksumURL     string
+	AssetSigURL     string // <AssetName>.minisig — detached minisign signature of the binary
+	ChecksumSigURL  string // SHA256SUMS.minisig — detached minisign signature of SHA256SUMS
 }
 
 type ghAsset struct {
@@ -60,8 +62,12 @@ func ResolveTarget(client *http.Client, apiBase, repo, requested, goos, goarch s
 		switch a.Name {
 		case want:
 			rel.AssetURL = a.URL
+		case want + ".minisig":
+			rel.AssetSigURL = a.URL
 		case "SHA256SUMS":
 			rel.ChecksumURL = a.URL
+		case "SHA256SUMS.minisig":
+			rel.ChecksumSigURL = a.URL
 		}
 	}
 	if rel.AssetURL == "" {

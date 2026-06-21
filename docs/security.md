@@ -74,3 +74,37 @@ attempts and post-incident forensics, not a determined attacker with root.
 That removes an entire class of catastrophe: a stray backtick or unquoted `$(...)` can't be
 re-interpreted into a destructive command on the way to the target. `shell` exists when you
 *want* a shell (pipes, globs), and it is logged explicitly as such.
+
+## Release integrity (signatures + checksums)
+
+Every installer and every `sparkyctrl upgrade` self-update verifies the downloaded artifact
+against **two** independent integrity checks:
+
+1. **Minisign signature** against the pinned release public key at `deploy/sparkyctrl-release.pub`
+   (also compiled into the binary at `internal/upgrade/sigverify.go:MinisignPublicKey` so the
+   `upgrade` path needs no key file on disk). The signature is checked first, before any hash
+   comparison — a release whose `.minisig` doesn't match the pinned key is refused outright.
+2. **SHA-256** against the published `SHA256SUMS` (also signed by the same minisign key, so a
+   tampered sums file is caught by the signature check above even if the sums file's hash matches
+   the binary's).
+
+The two together close the gap that "download a binary and `chmod +x` it" used to leave:
+checksum-only proves consistency with what the publisher hashed, but it does *not* prove the
+publisher is who you think they are. A signature does. If you want to trust the pinned key,
+`curl -fsSL https://raw.githubusercontent.com/SimpleHonors/sparkyctrl/master/deploy/sparkyctrl-release.pub`
+and store it on the target host (or pass `--binary <local-file>` to skip the network verify
+entirely for offline installs).
+
+**Why minisign and not cosign/sigstore?** Minisign is a single ~50 KB tool with an offline
+verify (no Rekor/Fulcio calls, no network dependency at verify time). The pinned-key model
+means a repo compromise can be detected by operators comparing the on-disk public key against
+their own copy; the same key file ships at `deploy/sparkyctrl-release.pub` and as the constant
+`MinisignPublicKey` in the binary. To rotate, generate a fresh keypair (`minisign -G -p new.pub
+-s new.key`), update both the file and the constant in a new release, and re-sign.
+
+**The verification path refuses to silently downgrade.** A release missing the `.minisig`
+artifact is rejected (the installer dies with a clear message; the Go `upgrade` returns an
+error). There is no `--allow-unsigned` or env var to bypass — the threat model assumes the
+attacker who can ship a binary can also remove the signature, so any opt-out re-opens the
+original gap.
+
