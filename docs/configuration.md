@@ -59,7 +59,7 @@ chmod 600 ~/.sparkyctrl/tokens
 |---|---|---|
 | `--addr H:P` | `0.0.0.0:7766` | Listen address. `0.0.0.0` = all interfaces (trusted LAN only). |
 | `--fence DIR` | none (full access) | Confine **file verbs** to `DIR`. Does not affect `exec`/`shell`. |
-| `--token T` | reads token file | Explicit token override. |
+| `--token T` | reads token file | Explicit token override. **Warning:** this puts the secret in the process command line (visible via `ps`). Prefer the token file or `SPARKYCTRL_TOKEN` env var. |
 | `--no-auth` | off | Disable token auth entirely. Only on a network you physically control. |
 | `--audit FILE` | none | Append every request (incl. denied) with source IP + outcome. |
 
