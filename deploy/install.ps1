@@ -48,6 +48,33 @@ function New-WorkerToken {
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
 }
+
+# Test-AgainstChecksum <binary_path> <asset_name> <sums_text>
+# Confirms the SHA-256 of <binary_path> matches the entry for <asset_name> in
+# <sums_text> (the body of a SHA256SUMS file). Throws on mismatch / missing entry
+# / hashing failure. Centralized so the test suite (tests/test_install_verify.ps1)
+# can exercise the same parser the installer uses.
+function Test-AgainstChecksum {
+    param(
+        [Parameter(Mandatory)][string]$BinaryPath,
+        [Parameter(Mandatory)][string]$AssetName,
+        [Parameter(Mandatory)][string]$SumsText
+    )
+    $hash = (Get-FileHash -Path $BinaryPath -Algorithm SHA256).Hash.ToLower()
+    # SHA256SUMS lines look like "<hex>  <filename>" or "<hex> *<filename>"
+    # (the `*` is sha256sum's binary-mode marker). Split on the first run of
+    # whitespace so the filename can have spaces.
+    $entry = $SumsText -split "`n" |
+        Where-Object { $_ -match "^\S+\s+\*?$([regex]::Escape($AssetName))$" } |
+        Select-Object -First 1
+    if (-not $entry) {
+        throw "no SHA256SUMS entry for $AssetName (release may predate SHA256SUMS — refusing to install unverified)"
+    }
+    $expected = ($entry -split "\s+")[0].ToLower()
+    if ($hash -ne $expected) {
+        throw "checksum mismatch for $AssetName: got $hash want $expected"
+    }
+}
 function Set-RestrictedAcl($Path) {
     if (-not (Test-Path -LiteralPath $Path)) { return }
     & icacls $Path /inheritance:r /grant:r "SYSTEM:F" "Administrators:F" | Out-Null
@@ -169,14 +196,30 @@ if ($Binary) {
 } else {
     if ($Version -eq "latest") {
         $url = "https://github.com/$Repo/releases/latest/download/sparkyctrl-windows-amd64.exe"
+        $sumsUrl = "https://github.com/$Repo/releases/latest/download/SHA256SUMS"
     } else {
         $url = "https://github.com/$Repo/releases/download/$Version/sparkyctrl-windows-amd64.exe"
+        $sumsUrl = "https://github.com/$Repo/releases/download/$Version/SHA256SUMS"
     }
-    Info "downloading $url"
-    # Bypass any intermediate caches (GitHub CDN, transparent proxies) so a
-    # re-run always fetches the current release, not a stale one.
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing `
-        -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"}
+    $sumsTmp = Join-Path $env:TEMP ("sparkyctrl-sums-" + [guid]::NewGuid().ToString("N") + ".txt")
+    try {
+        Info "downloading $url"
+        # Bypass any intermediate caches (GitHub CDN, transparent proxies) so a
+        # re-run always fetches the current release, not a stale one.
+        Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing `
+            -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"}
+        Info "downloading $sumsUrl"
+        Invoke-WebRequest -Uri $sumsUrl -OutFile $sumsTmp -UseBasicParsing `
+            -Headers @{"Cache-Control"="no-cache"; "Pragma"="no-cache"} `
+            -ErrorAction Stop
+        # Verify the binary against the published SHA256SUMS. A downloaded-but-
+        # unverified binary is the supply-chain risk the SHA256SUMS artifact
+        # exists to prevent: skip this check only by passing -Binary <local-file>.
+        # Matches the Go upgrade path's verifyChecksum() in internal/upgrade/download.go.
+        Test-AgainstChecksum -BinaryPath $dest -AssetName "sparkyctrl-windows-amd64.exe" -SumsText (Get-Content -Raw $sumsTmp)
+    } finally {
+        Remove-Item -LiteralPath $sumsTmp -Force -ErrorAction SilentlyContinue
+    }
 
     # Verify the binary actually works and report its version so the operator
     # can confirm the upgrade landed without a separate info call.
