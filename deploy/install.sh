@@ -79,6 +79,57 @@ download_url() {
   die "need curl or wget to download release binaries; install one and retry"
 }
 
+# verify_against_sums <binary> <asset_name> <sums_text>
+# Confirms sha256(binary) matches the entry for asset_name in sums_text.
+# sums_text is the body of a SHA256SUMS file (the same format `sha256sum` produces:
+# two spaces between the hash and the filename, one entry per line). On success:
+# no output, returns 0. On any failure: prints a diagnostic to stderr and returns 1.
+# Centralized so the test suite (tests/test_install_verify.sh) can exercise the
+# exact same parser the installer uses.
+verify_against_sums() {
+  local binary="$1"
+  local asset_name="$2"
+  local sums_text="$3"
+  local got expected line
+  if have_command sha256sum; then
+    got="$(sha256sum -- "$binary" 2>/dev/null | awk '{print $1}')"
+  elif have_command shasum; then
+    got="$(shasum -a 256 -- "$binary" 2>/dev/null | awk '{print $1}')"
+  elif have_command openssl; then
+    got="$(openssl dgst -sha256 -- "$binary" 2>/dev/null | awk '{print $NF}')"
+  else
+    echo "verify: need sha256sum, shasum, or openssl to verify the downloaded binary" >&2
+    return 1
+  fi
+  if [ -z "$got" ]; then
+    echo "verify: failed to compute sha256 of $binary" >&2
+    return 1
+  fi
+  # SHA256SUMS line format: "<hex>  <filename>" or "<hex> *<filename>" (binary mode
+  # marker from `sha256sum --binary`). Strip the leading `*` from $2 so the asset
+  # name match works in both plain and binary-mode form, and strip the trailing
+  # `*` from $1 so the hash comes through clean.
+  expected="$(
+    printf '%s\n' "$sums_text" \
+      | awk -v want="$asset_name" '
+            NF>=2 {
+              h = $1; sub(/\*$/, "", h)
+              n = $2; sub(/^\*/, "", n)
+              if (n == want) { print h; exit }
+            }
+          '
+  )"
+  if [ -z "$expected" ]; then
+    echo "verify: no SHA256SUMS entry for $asset_name (release may predate SHA256SUMS — refusing to install unverified)" >&2
+    return 1
+  fi
+  if [ "$got" != "$expected" ]; then
+    echo "verify: checksum mismatch for $asset_name: got $got want $expected" >&2
+    return 1
+  fi
+  return 0
+}
+
 prompt_for_fence() {
   local need="$1"
   local ans=""
@@ -166,14 +217,27 @@ if [ -z "$BINARY" ]; then
   esac
   if [ "$VERSION" = latest ]; then
     URL="https://github.com/${REPO}/releases/latest/download/sparkyctrl-linux-${ARCH}"
+    SUMS_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
   else
     URL="https://github.com/${REPO}/releases/download/${VERSION}/sparkyctrl-linux-${ARCH}"
+    SUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
   fi
   TMP="$(mktemp)"
+  SUMS_TMP="$(mktemp)"
+  trap 'rm -f "$TMP" "$SUMS_TMP"' EXIT
   echo "==> downloading ${URL}"
   # Bypass intermediate caches so re-runs always fetch the current release.
   download_url "$URL" "$TMP"
+  echo "==> downloading ${SUMS_URL}"
+  download_url "$SUMS_URL" "$SUMS_TMP" || die "failed to download SHA256SUMS — refusing to install unverified binary"
   chmod +x "$TMP"
+  # Verify the binary against the published SHA256SUMS. A downloaded-but-unverified
+  # binary is the supply-chain risk the SHA256SUMS artifact exists to prevent: skip
+  # this check only by passing --binary <local-file>. Matches the Go upgrade path's
+  # verifyChecksum() behavior in internal/upgrade/download.go.
+  if ! verify_against_sums "$TMP" "sparkyctrl-linux-${ARCH}" "$(cat "$SUMS_TMP")"; then
+    die "binary failed SHA256SUMS verification (refusing to install)"
+  fi
   BINARY="$TMP"
   # Verify the binary is executable and print its version.
   if version=$("$BINARY" --version 2>/dev/null); then
