@@ -11,17 +11,70 @@ import (
 	"strings"
 )
 
-// DownloadAndVerify downloads rel.AssetURL into destDir, verifies it against
-// the SHA256SUMS at rel.ChecksumURL, and returns the temp file path on success.
+// DownloadAndVerify downloads rel.AssetURL into destDir, verifies the
+// cryptographic signature of both the asset and SHA256SUMS against the
+// pinned release key (sigverify.MinisignPublicKey), then verifies the asset
+// hash against the SHA256SUMS body, and returns the temp file path on
+// success. Any failure removes the downloaded temp file and returns an error.
+//
+// Signature verification is the load-bearing security check here. SHA256SUMS
+// alone proves only that the artifact matches what was hashed at release time
+// — if an attacker compromises the release (or the sums file itself) the
+// checksum verify still passes. A minisign signature binds the artifact to
+// the pinned release key, which lives in the repo as deploy/sparkyctrl-release.pub
+// and is also compiled into this binary (sigverify.MinisignPublicKey).
+//
+// The checksum verify is kept because it gives us a second independent path to
+// trust the artifact, AND because it lets us surface a more specific error
+// (mismatch vs. untrusted) when something goes wrong.
+//
+// Signature pre-requisites (REQUIRED for any release the upgrader will accept):
+//   - rel.AssetSigURL  must resolve (asset's .minisig is present in the release)
+//   - rel.ChecksumSigURL must resolve (SHA256SUMS.minisig is present)
+//
+// A release that lacks either signature is rejected outright. There is no
+// opt-out flag — silent downgrade to checksum-only would defeat the whole
+// point of the signature path (and that gap is what 87dd3eb1 / af4487db were
+// opened to fix).
 func DownloadAndVerify(client *http.Client, rel Release, destDir string) (string, error) {
 	tmp := filepath.Join(destDir, rel.AssetName+".download")
 	if err := fetch(client, rel.AssetURL, tmp); err != nil {
 		return "", err
 	}
+	if rel.AssetSigURL == "" {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("release %s has no signature for %s (refusing unverified install)", rel.Tag, rel.AssetName)
+	}
+	assetSig, err := fetchString(client, rel.AssetSigURL)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("fetch %s signature: %w (refusing unverified install)", rel.AssetName, err)
+	}
+	if err := VerifyFileSignature(tmp, assetSig); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("signature verification failed for %s: %w", rel.AssetName, err)
+	}
+
+	if rel.ChecksumSigURL == "" {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("release %s has no SHA256SUMS.minisig (refusing unverified install)", rel.Tag)
+	}
+	sumsSig, err := fetchString(client, rel.ChecksumSigURL)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("fetch SHA256SUMS signature: %w (refusing unverified install)", err)
+	}
 	sums, err := fetchString(client, rel.ChecksumURL)
 	if err != nil {
 		_ = os.Remove(tmp)
 		return "", err
+	}
+	// Verify the signature of SHA256SUMS BEFORE trusting any hash inside it.
+	// Otherwise a checksum-valid attack is possible: attacker replaces both
+	// SHA256SUMS and the binary with self-consistent garbage.
+	if err := verifyStringSignature(sums, sumsSig); err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("signature verification failed for SHA256SUMS: %w", err)
 	}
 	if err := verifyChecksum(tmp, rel.AssetName, sums); err != nil {
 		_ = os.Remove(tmp)

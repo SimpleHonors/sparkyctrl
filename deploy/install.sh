@@ -105,7 +105,7 @@ verify_against_sums() {
     echo "verify: failed to compute sha256 of $binary" >&2
     return 1
   fi
-  # SHA256SUMS line format: "<hex>  <filename>" or "<hex> *<filename>" (binary mode
+  # SHA256SUMS line format: "<hex>   filename" or "<hex> *filename" (binary mode
   # marker from `sha256sum --binary`). Strip the leading `*` from $2 so the asset
   # name match works in both plain and binary-mode form, and strip the trailing
   # `*` from $1 so the hash comes through clean.
@@ -125,6 +125,40 @@ verify_against_sums() {
   fi
   if [ "$got" != "$expected" ]; then
     echo "verify: checksum mismatch for $asset_name: got $got want $expected" >&2
+    return 1
+  fi
+  return 0
+}
+
+# verify_against_signature <file> <signature_file> <pubkey_file>
+# Confirms <file>'s detached minisign signature at <signature_file> is valid
+# against the public key at <pubkey_file>. The minisign CLI also checks the
+# "global signature" internally (it binds the trusted comment to the same key,
+# blocking key-substitution attacks) so a single `minisign -Vm` call gives us
+# both halves of the verify.
+#
+# Returns 0 on success, 1 on any failure. The error message is printed to
+# stderr so the caller can decide whether to die or surface it differently.
+# A release that lacks the .minisig artifact will fail at the download step
+# (we set a strict 404 → die in the URL fetch), not here.
+verify_against_signature() {
+  local file="$1"
+  local sig="$2"
+  local pub="$3"
+  if ! have_command minisign; then
+    echo "verify: minisign is required for signature verification (install with: apt-get install minisign | dnf install minisign | brew install minisign)" >&2
+    return 1
+  fi
+  if [ ! -r "$pub" ]; then
+    echo "verify: public key file not readable: $pub" >&2
+    return 1
+  fi
+  if [ ! -r "$sig" ]; then
+    echo "verify: signature file not readable: $sig (release may predate the signing key — refusing to install unverified)" >&2
+    return 1
+  fi
+  if ! minisign -Vm "$file" -p "$pub" -x "$sig" >/dev/null 2>&1; then
+    echo "verify: minisign signature mismatch for $(basename "$file") (binary was not signed by the pinned release key — refusing to install)" >&2
     return 1
   fi
   return 0
@@ -218,25 +252,55 @@ if [ -z "$BINARY" ]; then
   if [ "$VERSION" = latest ]; then
     URL="https://github.com/${REPO}/releases/latest/download/sparkyctrl-linux-${ARCH}"
     SUMS_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS"
+    SIG_URL="https://github.com/${REPO}/releases/latest/download/sparkyctrl-linux-${ARCH}.minisig"
+    SUMS_SIG_URL="https://github.com/${REPO}/releases/latest/download/SHA256SUMS.minisig"
   else
     URL="https://github.com/${REPO}/releases/download/${VERSION}/sparkyctrl-linux-${ARCH}"
     SUMS_URL="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
+    SIG_URL="https://github.com/${REPO}/releases/download/${VERSION}/sparkyctrl-linux-${ARCH}.minisig"
+    SUMS_SIG_URL="https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS.minisig"
   fi
   TMP="$(mktemp)"
   SUMS_TMP="$(mktemp)"
-  trap 'rm -f "$TMP" "$SUMS_TMP"' EXIT
+  SIG_TMP="$(mktemp)"
+  SUMS_SIG_TMP="$(mktemp)"
+  trap 'rm -f "$TMP" "$SUMS_TMP" "$SIG_TMP" "$SUMS_SIG_TMP"' EXIT
+  # Resolve the public key. The installer carries it alongside the script so a
+  # curl|bash invocation still has it — the key file lives in the repo at
+  # deploy/sparkyctrl-release.pub and is read via BASH_SOURCE.
+  PUBKEY_FILE="${SPARKYCTRL_PUBKEY:-}"
+  if [ -z "$PUBKEY_FILE" ]; then
+    if [ -n "${BASH_SOURCE[0]:-}" ] && [ -r "${BASH_SOURCE[0]%/*}/sparkyctrl-release.pub" ]; then
+      PUBKEY_FILE="${BASH_SOURCE[0]%/*}/sparkyctrl-release.pub"
+    elif [ -r "./sparkyctrl-release.pub" ]; then
+      PUBKEY_FILE="./sparkyctrl-release.pub"
+    else
+      die "could not locate the pinned release public key (set SPARKYCTRL_PUBKEY=/path/to/sparkyctrl-release.pub or place it next to install.sh)"
+    fi
+  fi
   echo "==> downloading ${URL}"
   # Bypass intermediate caches so re-runs always fetch the current release.
   download_url "$URL" "$TMP"
   echo "==> downloading ${SUMS_URL}"
   download_url "$SUMS_URL" "$SUMS_TMP" || die "failed to download SHA256SUMS — refusing to install unverified binary"
+  echo "==> downloading ${SIG_URL}"
+  download_url "$SIG_URL" "$SIG_TMP" || die "failed to download .minisig for the binary — refusing to install an unsigned artifact"
+  echo "==> downloading ${SUMS_SIG_URL}"
+  download_url "$SUMS_SIG_URL" "$SUMS_SIG_TMP" || die "failed to download SHA256SUMS.minisig — refusing to install an unsigned release"
   chmod +x "$TMP"
-  # Verify the binary against the published SHA256SUMS. A downloaded-but-unverified
-  # binary is the supply-chain risk the SHA256SUMS artifact exists to prevent: skip
-  # this check only by passing --binary <local-file>. Matches the Go upgrade path's
-  # verifyChecksum() behavior in internal/upgrade/download.go.
+  # Defense in depth: every artifact must verify. We check signatures FIRST
+  # (before the checksum) so a tampered SHA256SUMS still gets caught by the
+  # SHA256SUMS.minisig bind, and a tampered binary still gets caught by the
+  # binary's own .minisig. The checksum is the third check: even if both
+  # signatures were somehow broken, a hash mismatch is still surfaced.
+  if ! verify_against_signature "$TMP" "$SIG_TMP" "$PUBKEY_FILE"; then
+    die "binary failed signature verification — refusing to install"
+  fi
+  if ! verify_against_signature "$SUMS_TMP" "$SUMS_SIG_TMP" "$PUBKEY_FILE"; then
+    die "SHA256SUMS failed signature verification — refusing to install"
+  fi
   if ! verify_against_sums "$TMP" "sparkyctrl-linux-${ARCH}" "$(cat "$SUMS_TMP")"; then
-    die "binary failed SHA256SUMS verification (refusing to install)"
+    die "binary failed SHA256SUMS verification — refusing to install"
   fi
   BINARY="$TMP"
   # Verify the binary is executable and print its version.
