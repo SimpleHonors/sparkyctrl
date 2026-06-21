@@ -500,6 +500,9 @@ func runServe(args []string) int {
 	if err != nil {
 		return fail(err.Error())
 	}
+	if authMode == "token-flag" {
+		fmt.Fprintln(os.Stderr, "sparkyctrl: warning: --token places the secret in the process command line (visible via ps). Prefer the token file or SPARKYCTRL_TOKEN env var.")
+	}
 	h := &server.Handler{Fence: *fence, Token: effectiveToken, Audit: auditor}
 	if authMode == "token-file" {
 		fmt.Printf("sparkyctrl %s listening on %s (fence=%q auth=%s path=%q audit=%q)\n",

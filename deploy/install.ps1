@@ -265,8 +265,8 @@ if (-not $NoAuth) {
     Set-Content -LiteralPath $tokenPath -NoNewline -Value $workerToken -Encoding ascii
     Set-RestrictedAcl $authDir
     Set-RestrictedAcl $tokenPath
-    Info "auth token ($tokenSource): $workerToken"
-    Info "`$Env:SPARKYCTRL_TOKEN = `"$workerToken`""
+    Info "auth token ($tokenSource): written to $tokenPath"
+    Info "set `$Env:SPARKYCTRL_TOKEN from $tokenPath for client use (do NOT pass on the command line)"
 }
 
 # 4. Assemble the serve arguments.

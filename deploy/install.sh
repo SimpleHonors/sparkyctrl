@@ -318,8 +318,8 @@ if [ "$NO_AUTH" -eq 0 ]; then
   mkdir -p "$TOKEN_DIR"
   printf '%s' "$WORKER_TOKEN" > "$TOKEN_PATH"
   chmod "$TOKEN_MODE" "$TOKEN_PATH"
-  echo "==> auth token ($TOKEN_SOURCE): $WORKER_TOKEN"
-  echo "==> export SPARKYCTRL_TOKEN=\"$WORKER_TOKEN\""
+  echo "==> auth token ($TOKEN_SOURCE): written to $TOKEN_PATH"
+  echo "==> set SPARKYCTRL_TOKEN from $TOKEN_PATH for client use (do NOT pass on the command line)"
 fi
 
 # Assemble the serve arguments.
