@@ -92,7 +92,7 @@ func defaultFactory(host string) (remoteClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client.New(base, os.Getenv("SPARKYCTRL_TOKEN")), nil
+	return client.New(base, client.ResolveToken(host)), nil
 }
 
 func hostsPath() string {

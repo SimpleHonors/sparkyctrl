@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -63,4 +64,40 @@ func Resolve(hosts map[string]string, name string) (string, error) {
 		}
 	}
 	return "http://" + addr, nil
+}
+
+// DefaultTokensPath returns the default client tokens file path, mirroring
+// the resolution order: SPARKYCTRL_TOKENS env, ./tokens, ~/.sparkyctrl/tokens.
+func DefaultTokensPath() string {
+	if p := os.Getenv("SPARKYCTRL_TOKENS"); p != "" {
+		return p
+	}
+	if _, err := os.Stat("tokens"); err == nil {
+		return "tokens"
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".sparkyctrl", "tokens")
+}
+
+// looseFilePerms reports whether a file mode grants any group/other access.
+func looseFilePerms(mode os.FileMode) bool {
+	return mode.Perm()&0o077 != 0
+}
+
+// ResolveToken returns the client auth token for the given host.
+// Precedence: SPARKYCTRL_TOKEN env (override) > per-host entry in tokens file > "".
+// Warns once to stderr if the tokens file is group/other-readable.
+func ResolveToken(host string) string {
+	if t := os.Getenv("SPARKYCTRL_TOKEN"); t != "" {
+		return t
+	}
+	path := DefaultTokensPath()
+	if info, err := os.Stat(path); err == nil && looseFilePerms(info.Mode()) {
+		fmt.Fprintf(os.Stderr, "sparkyctrl: warning: %s is readable by others (chmod 600)\n", path)
+	}
+	tokens, err := LoadTokens(path)
+	if err != nil {
+		return ""
+	}
+	return tokens[host]
 }
